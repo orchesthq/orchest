@@ -47,7 +47,8 @@ router.get("/install-url", async (req, res, next) => {
   try {
     const clientId = req.clientId!;
     const botKey = z.string().min(1).parse(req.query.bot);
-    const state = await createSlackInstallState({ clientId, botKey });
+    const agentId = z.string().uuid().optional().parse(req.query.agentId ?? undefined);
+    const state = await createSlackInstallState({ clientId, botKey, agentId: agentId ?? null });
     const url = getSlackAuthorizeUrl({ botKey, state });
     res.status(200).json({ url });
   } catch (err) {

@@ -1,6 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import {
+  enableAgentInSlack,
   handleSlackOAuthCallback,
   handleSlackEvent,
   listSlackSigningSecrets,
@@ -14,7 +15,20 @@ router.get("/callback", async (req, res, next) => {
     const code = z.string().min(1).parse(req.query.code);
     const state = z.string().min(1).parse(req.query.state);
 
-    await handleSlackOAuthCallback({ code, state });
+    const { installation, agentId } = await handleSlackOAuthCallback({ code, state });
+
+    const botKey = installation.bot_key ?? null;
+    if (agentId && installation.client_id && botKey) {
+      await enableAgentInSlack({
+        clientId: installation.client_id,
+        agentId,
+        botKey,
+      });
+      const base = process.env.DASHBOARD_BASE_URL?.replace(/\/+$/, "") ?? "";
+      const redirect = base ? `${base}/app/agents/${agentId}?slack=linked` : "/";
+      res.redirect(302, redirect);
+      return;
+    }
 
     const redirect = process.env.DASHBOARD_BASE_URL
       ? `${process.env.DASHBOARD_BASE_URL.replace(/\/+$/, "")}/app/integrations/slack?connected=1`

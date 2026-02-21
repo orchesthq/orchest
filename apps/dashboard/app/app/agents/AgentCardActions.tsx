@@ -16,10 +16,9 @@ type Props = {
   personaKey: string;
   personaName: string;
   agent: Agent | null;
-  slackConnected: boolean;
 };
 
-export function AgentCardActions({ personaKey, personaName, agent, slackConnected }: Props) {
+export function AgentCardActions({ personaKey, personaName, agent }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,27 +97,6 @@ export function AgentCardActions({ personaKey, personaName, agent, slackConnecte
           </button>
         </>
       )}
-
-      {!slackConnected ? (
-        <Link
-          href={`/app/integrations/slack/connect?bot=${encodeURIComponent(personaKey)}`}
-          className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-        >
-          Install in Slack
-        </Link>
-      ) : null}
-
-      {agent && slackConnected ? (
-        <form action={`/app/agents/${agent.id}/slack/enable`} method="post">
-          <input type="hidden" name="bot" value={personaKey} />
-          <button
-            type="submit"
-            className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-          >
-            Enable in Slack
-          </button>
-        </form>
-      ) : null}
     </div>
   );
 }

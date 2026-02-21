@@ -85,27 +85,35 @@ export function getSlackAuthorizeUrl(input: { botKey: string; state: string }): 
 export async function createSlackInstallState(input: {
   clientId: string;
   botKey: string;
+  agentId?: string | null;
 }): Promise<string> {
   const state = crypto.randomBytes(24).toString("hex");
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await createSlackOauthState({
     clientId: input.clientId,
     botKey: input.botKey,
+    agentId: input.agentId ?? null,
     state,
     expiresAt,
   });
   return state;
 }
 
+export type SlackOAuthCallbackResult = {
+  installation: SlackInstallationRow;
+  agentId: string | null;
+};
+
 export async function handleSlackOAuthCallback(input: {
   code: string;
   state: string;
-}): Promise<SlackInstallationRow> {
+}): Promise<SlackOAuthCallbackResult> {
   const record = await consumeSlackOauthState(input.state);
   if (!record) throw new Error("Invalid or expired Slack OAuth state");
 
   const clientId = record.client_id;
   const botKey = (record as any).bot_key ?? "orchest";
+  const agentId = (record as any).agent_id ?? null;
 
   const clientIdEnv = getSlackBotClientId(botKey);
   const clientSecret = getSlackBotClientSecret(botKey);
@@ -137,7 +145,7 @@ export async function handleSlackOAuthCallback(input: {
   const installedByUserId: string = json.authed_user?.id;
   const apiAppId: string | undefined = json.app_id;
 
-  return await upsertSlackInstallation({
+  const installation = await upsertSlackInstallation({
     clientId,
     botKey,
     teamId,
@@ -148,6 +156,7 @@ export async function handleSlackOAuthCallback(input: {
     botAccessToken,
     installedByUserId,
   });
+  return { installation, agentId };
 }
 
 export function verifySlackSignature(input: {

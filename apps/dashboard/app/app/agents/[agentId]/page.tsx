@@ -5,7 +5,6 @@ import { apiFetchForClient } from "@/lib/apiForClient";
 import { AgentEditor } from "./AgentEditor";
 import { DisableButton } from "./DisableButton";
 import { z } from "zod";
-import { ORCHEST_PERSONAS } from "@/lib/personas";
 import { getClientIdFromSession } from "@/lib/session";
 
 type Agent = {
@@ -70,6 +69,7 @@ export default async function AgentPage({
   let agentResp: { agent: Agent } | null = null;
   let memResp: { memories: Memory[] } | null = null;
   let slackStatus: SlackStatus | null = null;
+  let slackLink: SlackLink | null = null;
   let loadError: string | null = null;
   try {
     agentResp = await apiFetchForClient<{ agent: Agent }>(
@@ -87,6 +87,18 @@ export default async function AgentPage({
     slackStatus = await apiFetchForClient<SlackStatus>(clientId, "/internal/slack/status", {
       method: "GET",
     });
+
+    const botKey = agentResp?.agent?.persona_key ?? "ava";
+    try {
+      const linkResp = await apiFetchForClient<{ link: SlackLink }>(
+        clientId,
+        `/internal/slack/agents/${agentIdParsed.data}/link?bot=${encodeURIComponent(botKey)}`,
+        { method: "GET" }
+      );
+      slackLink = linkResp.link ?? null;
+    } catch {
+      slackLink = null;
+    }
   } catch (err) {
     loadError = err instanceof Error ? err.message : String(err);
   }
@@ -116,15 +128,8 @@ export default async function AgentPage({
   }
 
   const latestProfile = memResp?.memories?.[0]?.content ?? "";
-  const connectedBots = ORCHEST_PERSONAS.filter((p) => {
-    const s = slackStatus?.bots?.[p.key];
-    return Boolean(s && (s as any).connected);
-  });
-  const preferredBotKey = agentResp.agent.persona_key ?? null;
-  const defaultBotKey =
-    (preferredBotKey && connectedBots.some((b) => b.key === preferredBotKey) && preferredBotKey) ||
-    connectedBots[0]?.key ||
-    "ava";
+  const botKey = agentResp.agent.persona_key ?? "ava";
+  const isLinked = Boolean(slackLink);
 
   return (
     <div className="space-y-6">
@@ -159,44 +164,15 @@ export default async function AgentPage({
           <div>
             <h2 className="text-lg font-semibold text-zinc-900">Slack</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Enable this agent in Slack so it can receive DMs and @mentions.
+              Install this agent in Slack so it can receive DMs and @mentions. It will be linked to the {agentResp.agent.name} bot.
             </p>
-            {connectedBots.length === 0 ? (
-              <p className="mt-2 text-xs text-amber-700">
-                No Slack bot installed for this persona.{" "}
-                <Link
-                  href={`/app/integrations/slack/connect?bot=${encodeURIComponent(preferredBotKey ?? "ava")}`}
-                  className="font-medium text-amber-800 underline"
-                >
-                  Install in Slack
-                </Link>
-              </p>
-            ) : null}
           </div>
-
-          {connectedBots.length > 0 && (
-          <form action={`/app/agents/${agentIdParsed.data}/slack/enable`} method="post">
-            <div className="flex items-center gap-3">
-              <select
-                name="bot"
-                className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900"
-                defaultValue={defaultBotKey}
-              >
-                {connectedBots.map((p) => (
-                  <option key={p.key} value={p.key}>
-                    {p.name} (@{p.name})
-                  </option>
-                ))}
-              </select>
-            <button
-              type="submit"
-              className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Enable in Slack
-            </button>
-            </div>
-          </form>
-          )}
+          <Link
+            href={`/app/integrations/slack/connect?bot=${encodeURIComponent(botKey)}&agentId=${encodeURIComponent(agentIdParsed.data)}`}
+            className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          >
+            {isLinked ? "Reinstall in Slack" : "Install in Slack"}
+          </Link>
         </div>
       </div>
 

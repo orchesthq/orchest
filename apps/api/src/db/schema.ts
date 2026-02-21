@@ -88,6 +88,7 @@ export type SlackOauthStateRow = {
   state: string;
   client_id: string;
   bot_key?: string;
+  agent_id?: string | null;
   created_at: string;
   expires_at: string;
 };
@@ -304,15 +305,17 @@ export async function createSlackOauthState(input: {
   clientId: string;
   state: string;
   botKey: string;
+  agentId?: string | null;
   expiresAt: Date;
 }): Promise<void> {
   assertUuid(input.clientId, "clientId");
+  if (input.agentId) assertUuid(input.agentId, "agentId");
   await query(
     [
-      "insert into slack_oauth_states (state, client_id, bot_key, expires_at)",
-      "values ($1, $2, $3, $4)",
+      "insert into slack_oauth_states (state, client_id, bot_key, agent_id, expires_at)",
+      "values ($1, $2, $3, $4, $5)",
     ].join("\n"),
-    [input.state, input.clientId, input.botKey, input.expiresAt.toISOString()]
+    [input.state, input.clientId, input.botKey, input.agentId ?? null, input.expiresAt.toISOString()]
   );
 }
 
@@ -321,7 +324,7 @@ export async function consumeSlackOauthState(state: string): Promise<SlackOauthS
     [
       "delete from slack_oauth_states",
       "where state = $1 and expires_at > now()",
-      "returning state, client_id, bot_key, created_at, expires_at",
+      "returning state, client_id, bot_key, agent_id, created_at, expires_at",
     ].join("\n"),
     [state]
   );

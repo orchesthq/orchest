@@ -135,7 +135,6 @@ export default async function AgentsPage() {
                 personaKey={p.key}
                 personaName={p.name}
                 agent={agent}
-                slackConnected={slackConnected}
               />
             </div>
           );
