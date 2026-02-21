@@ -25,7 +25,10 @@ export async function apiCreateClient(input: {
     cache: "no-store",
   });
 
-  if (!res.ok) throw new Error(`API create client failed: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API create client failed: ${res.status} ${text}`);
+  }
   const json = await res.json();
 
   const parsed = z
@@ -52,7 +55,10 @@ export async function apiCreateMembership(input: {
     body: JSON.stringify(input),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`API create membership failed: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API create membership failed: ${res.status} ${text}`);
+  }
 }
 
 export async function apiGetClientById(input: { clientId: string }): Promise<{ id: string; name: string }> {
@@ -63,7 +69,10 @@ export async function apiGetClientById(input: { clientId: string }): Promise<{ i
     },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`API get client failed: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API get client failed: ${res.status} ${text}`);
+  }
   const json = await res.json();
   const parsed = z
     .object({
