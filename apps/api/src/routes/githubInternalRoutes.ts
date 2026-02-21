@@ -6,6 +6,7 @@ import {
   getAgentGitHubConnection,
   linkAgentToGitHub,
   handleGitHubInstallationCallback,
+  listInstallationRepos,
 } from "../integrations/github/githubService";
 
 const router = express.Router();
@@ -25,6 +26,16 @@ router.post("/complete-installation", async (req, res, next) => {
     });
 
     res.status(200).json({ installation });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/repos", async (req, res, next) => {
+  try {
+    const clientId = req.clientId!;
+    const repos = await listInstallationRepos(clientId);
+    res.status(200).json({ repos });
   } catch (err) {
     next(err);
   }
@@ -76,6 +87,7 @@ router.post("/agents/:agentId/link", async (req, res, next) => {
         commitAuthorEmail: z.string().email().optional(),
         accessLevel: z.enum(["read", "pr_only", "direct_push"]).optional(),
         defaultBranch: z.string().min(1).optional(),
+        defaultRepo: z.string().min(1).optional(),
       })
       .parse(req.body ?? {});
 
@@ -86,6 +98,7 @@ router.post("/agents/:agentId/link", async (req, res, next) => {
       commitAuthorEmail: body.commitAuthorEmail ?? "",
       accessLevel: body.accessLevel,
       defaultBranch: body.defaultBranch,
+      defaultRepo: body.defaultRepo,
     });
 
     res.status(200).json({ connection });

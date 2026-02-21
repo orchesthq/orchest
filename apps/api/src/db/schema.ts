@@ -124,6 +124,7 @@ export type GitHubAgentConnectionRow = {
   commit_author_email: string;
   access_level: "read" | "pr_only" | "direct_push";
   default_branch: string;
+  default_repo: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -852,7 +853,7 @@ export async function getGitHubAgentConnectionByAgentId(
   assertUuid(agentId, "agentId");
   const { rows } = await query<GitHubAgentConnectionRow>(
     [
-      "select id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, created_at, updated_at",
+      "select id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, default_repo, created_at, updated_at",
       "from github_agent_connections",
       "where agent_id = $1",
       "limit 1",
@@ -869,21 +870,23 @@ export async function createGitHubAgentConnection(input: {
   commitAuthorEmail: string;
   accessLevel: "read" | "pr_only" | "direct_push";
   defaultBranch: string;
+  defaultRepo?: string | null;
 }): Promise<GitHubAgentConnectionRow> {
   assertUuid(input.agentId, "agentId");
   assertUuid(input.githubInstallationId, "githubInstallationId");
   const { rows } = await query<GitHubAgentConnectionRow>(
     [
-      "insert into github_agent_connections (agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, updated_at)",
-      "values ($1, $2, $3, $4, $5, $6, now())",
+      "insert into github_agent_connections (agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, default_repo, updated_at)",
+      "values ($1, $2, $3, $4, $5, $6, $7, now())",
       "on conflict (agent_id) do update set",
       "  github_installation_id = excluded.github_installation_id,",
       "  commit_author_name = excluded.commit_author_name,",
       "  commit_author_email = excluded.commit_author_email,",
       "  access_level = excluded.access_level,",
       "  default_branch = excluded.default_branch,",
+      "  default_repo = excluded.default_repo,",
       "  updated_at = now()",
-      "returning id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, created_at, updated_at",
+      "returning id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, default_repo, created_at, updated_at",
     ].join("\n"),
     [
       input.agentId,
@@ -892,6 +895,7 @@ export async function createGitHubAgentConnection(input: {
       input.commitAuthorEmail,
       input.accessLevel,
       input.defaultBranch,
+      input.defaultRepo ?? null,
     ]
   );
   return one(rows, "Failed to create GitHub agent connection");

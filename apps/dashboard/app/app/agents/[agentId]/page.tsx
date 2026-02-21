@@ -52,6 +52,7 @@ type GitHubConnection = {
   commit_author_email: string;
   access_level: string;
   default_branch: string;
+  default_repo: string | null;
 };
 
 export default async function AgentPage({
@@ -86,6 +87,7 @@ export default async function AgentPage({
   let slackLink: SlackLink | null = null;
   let githubStatus: GitHubStatus | null = null;
   let githubConnection: GitHubConnection | null = null;
+  let githubRepos: Array<{ full_name: string }> = [];
   let loadError: string | null = null;
   try {
     agentResp = await apiFetchForClient<{ agent: Agent }>(
@@ -134,6 +136,19 @@ export default async function AgentPage({
     } catch {
       githubConnection = null;
     }
+
+  if (githubStatus?.connected) {
+    try {
+      const reposResp = await apiFetchForClient<{ repos: Array<{ full_name: string }> }>(
+        clientId,
+        "/internal/github/repos",
+        { method: "GET" }
+      );
+      githubRepos = reposResp.repos ?? [];
+    } catch {
+      githubRepos = [];
+    }
+  }
   } catch (err) {
     loadError = err instanceof Error ? err.message : String(err);
   }
@@ -233,14 +248,51 @@ export default async function AgentPage({
             </Link>
           ) : githubConnection ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-sm text-emerald-700">
-                <span>Linked as</span>
+              <div className="flex flex-wrap items-center gap-2 text-sm text-emerald-700">
+                <span>Linked to</span>
+                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">
+                  {githubConnection.default_repo ?? "(no repo)"}
+                </code>
+                <span>({githubConnection.access_level})</span>
+                <span>as</span>
                 <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">
                   {githubConnection.commit_author_name} &lt;{githubConnection.commit_author_email}&gt;
                 </code>
               </div>
               <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
                 <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label htmlFor="defaultRepo" className="block text-xs font-medium text-zinc-500">
+                      Repository
+                    </label>
+                    <select
+                      id="defaultRepo"
+                      name="defaultRepo"
+                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                      defaultValue={githubConnection.default_repo ?? ""}
+                    >
+                      {githubRepos.map((r) => (
+                        <option key={r.full_name} value={r.full_name}>
+                          {r.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="accessLevel" className="block text-xs font-medium text-zinc-500">
+                      Access
+                    </label>
+                    <select
+                      id="accessLevel"
+                      name="accessLevel"
+                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                      defaultValue={githubConnection.access_level}
+                    >
+                      <option value="read">Read only</option>
+                      <option value="pr_only">PR only (recommended)</option>
+                      <option value="direct_push">Direct push</option>
+                    </select>
+                  </div>
                   <div>
                     <label htmlFor="commitAuthorName" className="block text-xs font-medium text-zinc-500">
                       Commit author name
@@ -251,7 +303,6 @@ export default async function AgentPage({
                       type="text"
                       defaultValue={githubConnection.commit_author_name}
                       className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                      placeholder={agentResp.agent.name}
                     />
                   </div>
                   <div>
@@ -264,7 +315,6 @@ export default async function AgentPage({
                       type="email"
                       defaultValue={githubConnection.commit_author_email}
                       className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                      placeholder="ava@agents.orchest.io"
                     />
                   </div>
                   <button
@@ -276,9 +326,46 @@ export default async function AgentPage({
                 </div>
               </form>
             </div>
+          ) : githubRepos.length === 0 ? (
+            <p className="text-xs text-amber-700">
+              No repositories found. Ensure the Orchest GitHub App has access to at least one repository, then refresh.
+            </p>
           ) : (
             <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
               <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label htmlFor="defaultRepo" className="block text-xs font-medium text-zinc-500">
+                    Repository *
+                  </label>
+                  <select
+                    id="defaultRepo"
+                    name="defaultRepo"
+                    required
+                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                  >
+                    <option value="">Select repository</option>
+                    {githubRepos.map((r) => (
+                      <option key={r.full_name} value={r.full_name}>
+                        {r.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="accessLevel" className="block text-xs font-medium text-zinc-500">
+                    Access
+                  </label>
+                  <select
+                    id="accessLevel"
+                    name="accessLevel"
+                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                    defaultValue="pr_only"
+                  >
+                    <option value="read">Read only</option>
+                    <option value="pr_only">PR only (recommended)</option>
+                    <option value="direct_push">Direct push</option>
+                  </select>
+                </div>
                 <div>
                   <label htmlFor="commitAuthorName" className="block text-xs font-medium text-zinc-500">
                     Commit author name
@@ -289,7 +376,6 @@ export default async function AgentPage({
                     type="text"
                     defaultValue={agentResp.agent.name}
                     className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                    placeholder={agentResp.agent.name}
                   />
                 </div>
                 <div>
@@ -302,7 +388,6 @@ export default async function AgentPage({
                     type="email"
                     defaultValue={`${agentResp.agent.name.toLowerCase().replace(/\s+/g, "-")}@agents.orchest.io`}
                     className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                    placeholder="ava@agents.orchest.io"
                   />
                 </div>
                 <button

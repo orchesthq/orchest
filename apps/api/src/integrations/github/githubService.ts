@@ -169,6 +169,7 @@ export async function linkAgentToGitHub(input: {
   commitAuthorEmail: string;
   accessLevel?: "read" | "pr_only" | "direct_push";
   defaultBranch?: string;
+  defaultRepo?: string | null;
 }): Promise<GitHubAgentConnectionRow> {
   const installation = await getGitHubInstallationByClientId(input.clientId);
   if (!installation) {
@@ -179,6 +180,10 @@ export async function linkAgentToGitHub(input: {
   if (!agent) throw new Error("Agent not found");
 
   const safeEmail = (s: string) => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  if (!input.defaultRepo?.trim()) {
+    throw new Error("Repository is required. Select a repository when linking the agent.");
+  }
+
   return createGitHubAgentConnection({
     agentId: input.agentId,
     githubInstallationId: installation.id,
@@ -186,7 +191,28 @@ export async function linkAgentToGitHub(input: {
     commitAuthorEmail: input.commitAuthorEmail?.trim() || `${safeEmail(agent.name)}@agents.orchest.io`,
     accessLevel: input.accessLevel ?? "pr_only",
     defaultBranch: input.defaultBranch ?? "main",
+    defaultRepo: input.defaultRepo.trim(),
   });
+}
+
+/**
+ * List repositories the installation has access to.
+ */
+export async function listInstallationRepos(clientId: string): Promise<Array<{ full_name: string }>> {
+  const installation = await getGitHubInstallationByClientId(clientId);
+  if (!installation) return [];
+
+  const token = await getValidInstallationToken(installation.installation_id);
+  const res = await fetch("https://api.github.com/installation/repositories", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!res.ok) return [];
+  const json = (await res.json()) as { repositories?: Array<{ full_name: string }> };
+  return json.repositories?.map((r) => ({ full_name: r.full_name })) ?? [];
 }
 
 export async function getAgentGitHubConnection(
@@ -196,4 +222,12 @@ export async function getAgentGitHubConnection(
   const agent = await getAgentByIdScoped(clientId, agentId);
   if (!agent) return null;
   return getGitHubAgentConnectionByAgentId(agentId);
+}
+
+/**
+ * Get a valid token for an installation. Fetches fresh token (they expire in 1h).
+ */
+export async function getValidInstallationToken(installationId: number): Promise<string> {
+  const { token } = await getInstallationAccessToken(installationId);
+  return token;
 }

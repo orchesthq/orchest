@@ -24,6 +24,17 @@ export async function POST(
   const formData = await req.formData();
   const commitAuthorName = (formData.get("commitAuthorName") as string)?.trim() ?? "";
   const commitAuthorEmail = (formData.get("commitAuthorEmail") as string)?.trim() ?? "";
+  const defaultRepo = (formData.get("defaultRepo") as string)?.trim() ?? "";
+  const accessLevel = (formData.get("accessLevel") as string) || "pr_only";
+
+  if (!defaultRepo) {
+    return NextResponse.redirect(
+      new URL(
+        `/app/agents/${agentIdParsed.data}?error=github_repo_required`,
+        process.env.NEXTAUTH_URL
+      )
+    );
+  }
 
   try {
     await apiFetchForClient(clientId, `/internal/github/agents/${agentIdParsed.data}/link`, {
@@ -32,6 +43,8 @@ export async function POST(
       body: JSON.stringify({
         commitAuthorName: commitAuthorName || undefined,
         commitAuthorEmail: commitAuthorEmail || undefined,
+        defaultRepo,
+        accessLevel: ["read", "pr_only", "direct_push"].includes(accessLevel) ? accessLevel : undefined,
       }),
     });
   } catch (err) {

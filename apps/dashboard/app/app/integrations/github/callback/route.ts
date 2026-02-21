@@ -47,7 +47,9 @@ export async function GET(req: Request) {
     );
   }
 
-  const res = NextResponse.redirect(new URL(returnTo, process.env.NEXTAUTH_URL));
+  const base = process.env.NEXTAUTH_URL ?? process.env.DASHBOARD_BASE_URL ?? "http://localhost:3001";
+  const target = returnTo.startsWith("http") ? returnTo : new URL(returnTo, base.replace(/\/+$/, "")).toString();
+  const res = NextResponse.redirect(target);
   res.cookies.delete(GITHUB_CONNECT_COOKIE);
   return res;
 }

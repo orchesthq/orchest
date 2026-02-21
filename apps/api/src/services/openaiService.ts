@@ -161,7 +161,7 @@ export async function summarizeResults(input: {
     "## Execution results",
     input.executed.map((r, i) => `${i + 1}. ${r.step}\n- ${r.result}`).join("\n\n"),
     "",
-    "Write a clear, client-facing summary (what was done, what changed, what's next).",
+    "Write a clear, client-facing summary. CRITICAL: If any result says 'Not executed', 'Simulated', 'Mocked', or describes a failure/error, you MUST state explicitly that the step was NOT performed and why. Never claim work was done when it was not.",
   ].join("\n");
 
   const content = await chatCompletion({ system, user });

@@ -26,6 +26,7 @@ npm install
    - `migrations/006_backfill_persona_key_from_name.sql`
    - `migrations/007_slack_oauth_agent_id.sql`
    - `migrations/008_github_integration.sql`
+   - `migrations/009_github_agent_default_repo.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
@@ -141,8 +142,9 @@ Each agent can be linked to GitHub with its own commit identity (e.g. "Ava (Acme
 
 1. Go to [GitHub → Settings → Developer settings → GitHub Apps → New GitHub App](https://github.com/settings/apps/new)
 2. **Name:** Orchest
-3. **Homepage URL:** your dashboard URL
-4. **Setup URL (post-install redirect):** `https://<dashboard>/app/integrations/github/callback`
+3. **Homepage URL:** your dashboard URL (e.g. `https://your-dashboard.vercel.app`)
+4. **Setup URL (post-install redirect):** **Required** – `https://<your-dashboard-domain>/app/integrations/github/callback`  
+   Without this, GitHub will not redirect users back after install.
 5. **Permissions:** Repository → Contents (Read and write), Pull requests (Read and write), Metadata (Read)
 6. Create the app, then under "About" note the **App ID** and **slug** (from the URL). Generate a **private key**.
 

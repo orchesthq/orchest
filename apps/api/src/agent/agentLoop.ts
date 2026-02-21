@@ -8,7 +8,11 @@ import {
 import { loadAgentMemories } from "./memoryService";
 import { createPlan } from "./planningService";
 import { summarizeResults } from "../services/openaiService";
-import * as github from "../integrations/github/githubTools";
+import {
+  create_branch,
+  create_file_and_commit,
+  open_pull_request,
+} from "../integrations/github/githubTools";
 
 // Core agent loop (plan → execute → summarize).
 // Production intent:
@@ -40,8 +44,9 @@ export async function runAgentTask(taskId: string): Promise<AgentExecutionResult
     });
 
     const executed: Array<{ step: string; result: string }> = [];
+    const githubCtx = { clientId: ctx.client.id, agentId: ctx.agent.id };
     for (const step of plan.steps) {
-      const result = await simulateStep(step, { taskId });
+      const result = await executeStep(step, { taskId }, githubCtx);
       executed.push({ step, result });
     }
 
@@ -74,28 +79,45 @@ export async function runAgentTask(taskId: string): Promise<AgentExecutionResult
   }
 }
 
-async function simulateStep(
+async function executeStep(
   step: string,
-  ctx: { taskId: string }
+  ctx: { taskId: string },
+  githubCtx: { clientId: string; agentId: string }
 ): Promise<string> {
   const normalized = step.toLowerCase();
-  const repo = process.env.GITHUB_REPO ?? "mock-org/mock-repo";
-  const base = process.env.GITHUB_BASE_BRANCH ?? "main";
   const branch = `task-${ctx.taskId.slice(0, 8)}`;
 
-  // Very small “tool router” scaffold. As you add tools, this becomes a real executor.
   if (normalized.includes("create_branch") || normalized.includes("create branch")) {
-    const r = await github.create_branch({ repo, base, branch });
-    return r.message;
+    const r = await create_branch(
+      { repo: "", base: "main", branch },
+      githubCtx
+    );
+    return r.ok ? r.message : r.message;
   }
 
-  if (normalized.includes("commit") || normalized.includes("commit_changes")) {
-    const r = await github.commit_changes({
-      repo,
-      branch,
-      message: `Work for task ${ctx.taskId}`,
-    });
-    return r.message;
+  if (
+    (normalized.includes("add") && normalized.includes("file")) ||
+    normalized.includes("create file") ||
+    normalized.includes("hello-world") ||
+    normalized.includes("hello world")
+  ) {
+    const branchRes = await create_branch(
+      { repo: "", base: "main", branch },
+      githubCtx
+    );
+    if (!branchRes.ok) return branchRes.message;
+
+    const r = await create_file_and_commit(
+      {
+        repo: "",
+        branch,
+        path: "hello-world.txt",
+        content: "Hello, World!",
+        message: "Add hello-world file",
+      },
+      githubCtx
+    );
+    return r.ok ? r.message : r.message;
   }
 
   if (
@@ -103,16 +125,19 @@ async function simulateStep(
     normalized.includes("open_pull_request") ||
     normalized.includes("open pr")
   ) {
-    const r = await github.open_pull_request({
-      repo,
-      branch,
-      base,
-      title: `Task ${ctx.taskId}`,
-      body: "Mocked PR body (GitHub integration scaffold).",
-    });
-    return r.message;
+    const r = await open_pull_request(
+      {
+        repo: "",
+        branch,
+        base: "main",
+        title: `Task ${ctx.taskId}`,
+        body: "",
+      },
+      githubCtx
+    );
+    return r.ok ? r.message : r.message;
   }
 
-  return `Simulated: ${step}`;
+  return `Not executed: no tool matched this step. The agent can create branches, add files (create_file_and_commit), and open PRs when linked to GitHub with a repository.`;
 }
 
