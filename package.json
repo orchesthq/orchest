@@ -1,0 +1,21 @@
+{
+  "name": "orchest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Orchest - AI Workforce Orchestrator (API + Dashboard).",
+  "type": "commonjs",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,dashboard \"npm run dev -w @orchest/api\" \"npm run dev -w @orchest/dashboard\"",
+    "build": "npm run build -w @orchest/api && npm run build -w @orchest/dashboard",
+    "start": "npm run start -w @orchest/api",
+    "typecheck": "npm run typecheck -w @orchest/api && npm run typecheck -w @orchest/dashboard"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "concurrently": "^9.2.1"
+  }
+}
+
