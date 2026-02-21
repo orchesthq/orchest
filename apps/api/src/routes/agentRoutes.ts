@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ensureDefaultAgentForClient,
   createAgent,
+  deleteAgentScoped,
   getAgentByIdScoped,
   listAgentsScoped,
   listAgentMemoriesByTypeScoped,
@@ -178,6 +179,18 @@ router.patch("/:agentId", requireInternalServiceAuth, async (req, res, next) => 
     });
 
     res.status(200).json({ agent });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/:agentId", requireInternalServiceAuth, async (req, res, next) => {
+  try {
+    const clientId = req.clientId!;
+    const agentId = z.string().uuid().parse(req.params.agentId);
+
+    await deleteAgentScoped({ clientId, agentId });
+    res.status(204).send();
   } catch (err) {
     next(err);
   }

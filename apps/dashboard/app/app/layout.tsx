@@ -19,6 +19,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/app" className="text-sm font-semibold text-zinc-900">
               Orchest
             </Link>
+            <Link href="/app/agents" className="text-sm text-zinc-600 hover:text-zinc-900">
+              Agents
+            </Link>
             <span className="text-xs text-zinc-500">
               {clientName ? `Client: ${clientName}` : `Client: ${clientId ?? "unknown"}`}
             </span>

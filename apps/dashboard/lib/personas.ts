@@ -36,3 +36,11 @@ export function getPersonaByKey(key: string): OrchestPersona | undefined {
   return ORCHEST_PERSONAS.find((p) => p.key === key);
 }
 
+export const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
+  ava: "ai_software_engineer",
+  ben: "ai_devops_sre",
+  priya: "ai_product_manager",
+  sofia: "ai_data_analyst",
+  amira: "ai_customer_support",
+};
+

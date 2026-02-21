@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { AgentEditor } from "./AgentEditor";
+import { DisableButton } from "./DisableButton";
 import { z } from "zod";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
 import { getClientIdFromSession } from "@/lib/session";
@@ -158,15 +159,22 @@ export default async function AgentPage({
           <div>
             <h2 className="text-lg font-semibold text-zinc-900">Slack</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Choose a Slack bot identity (e.g. @Ava) and enable this agent under it.
+              Enable this agent in Slack so it can receive DMs and @mentions.
             </p>
             {connectedBots.length === 0 ? (
               <p className="mt-2 text-xs text-amber-700">
-                No Slack bots installed yet. Go to Integrations → Slack and install at least one bot.
+                No Slack bot installed for this persona.{" "}
+                <Link
+                  href={`/app/integrations/slack/connect?bot=${encodeURIComponent(preferredBotKey ?? "ava")}`}
+                  className="font-medium text-amber-800 underline"
+                >
+                  Install in Slack
+                </Link>
               </p>
             ) : null}
           </div>
 
+          {connectedBots.length > 0 && (
           <form action={`/app/agents/${agentIdParsed.data}/slack/enable`} method="post">
             <div className="flex items-center gap-3">
               <select
@@ -187,6 +195,21 @@ export default async function AgentPage({
               Enable in Slack
             </button>
             </div>
+          </form>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-900">Disable agent</h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              Remove this agent. Tasks and memories will be deleted. You can hire again later.
+            </p>
+          </div>
+          <form action={`/app/agents/${agentIdParsed.data}/disable`} method="post">
+            <DisableButton />
           </form>
         </div>
       </div>

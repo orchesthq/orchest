@@ -226,6 +226,20 @@ export async function updateAgentScoped(input: {
   return one(rows, "Agent not found for client (cannot update)");
 }
 
+export async function deleteAgentScoped(input: {
+  clientId: string;
+  agentId: string;
+}): Promise<void> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.agentId, "agentId");
+
+  const { rows } = await query(
+    "delete from agents where client_id = $1 and id = $2 returning id",
+    [input.clientId, input.agentId]
+  );
+  if (rows.length === 0) throw new Error("Agent not found for client (cannot delete)");
+}
+
 export async function ensureDefaultAgentForClient(
   clientId: string,
   agentName?: string

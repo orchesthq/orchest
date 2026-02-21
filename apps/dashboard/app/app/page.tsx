@@ -22,26 +22,12 @@ export default async function DashboardHome() {
         </p>
 
         <div className="mt-6">
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Link
-              href="/app/personas"
-              className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Personas
-            </Link>
-            <Link
-              href="/app/integrations/slack"
-              className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-            >
-              Slack integration
-            </Link>
-            <Link
-              href="/app/agents"
-              className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-            >
-              All agents
-            </Link>
-          </div>
+          <Link
+            href="/app/agents"
+            className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          >
+            Agents
+          </Link>
         </div>
       </div>
     </div>

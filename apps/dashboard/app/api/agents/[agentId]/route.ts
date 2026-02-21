@@ -38,3 +38,24 @@ export async function PATCH(
   return NextResponse.json(result);
 }
 
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ agentId: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  const clientId = getClientIdFromSession(session);
+  if (!clientId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { agentId } = await params;
+  const agentIdParsed = z.string().uuid().safeParse(agentId);
+  if (!agentIdParsed.success) {
+    return NextResponse.json({ error: "Invalid agent id" }, { status: 400 });
+  }
+
+  await apiFetchForClient(clientId, `/agents/${agentIdParsed.data}`, {
+    method: "DELETE",
+  });
+
+  return new NextResponse(null, { status: 204 });
+}
+
