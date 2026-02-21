@@ -264,7 +264,26 @@ export async function enableAgentInSlack(input: {
   return link;
 }
 
+// Deduplicate events: Slack retries if it doesn't get 200 in time, sending the same event_id.
+const processedEventIds = new Set<string>();
+const MAX_EVENT_IDS = 5000;
+
+function isDuplicateEvent(eventId: string): boolean {
+  if (!eventId) return false;
+  if (processedEventIds.has(eventId)) return true; // already seen = duplicate
+  processedEventIds.add(eventId);
+  if (processedEventIds.size > MAX_EVENT_IDS) {
+    const arr = Array.from(processedEventIds);
+    processedEventIds.clear();
+    arr.slice(-MAX_EVENT_IDS / 2).forEach((id) => processedEventIds.add(id));
+  }
+  return false; // first time seeing this event
+}
+
 export async function handleSlackEvent(input: { payload: any }): Promise<void> {
+  const eventId = input.payload?.event_id;
+  if (eventId && isDuplicateEvent(eventId)) return; // duplicate – skip
+
   const teamId: string | undefined = input.payload?.team_id;
   const apiAppId: string | undefined = input.payload?.api_app_id;
   if (!teamId) return;

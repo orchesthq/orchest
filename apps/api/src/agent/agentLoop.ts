@@ -111,6 +111,8 @@ async function executeStep(
   }
 
   if (
+    normalized.includes("create_file_and_commit") ||
+    normalized.includes("create file and commit") ||
     (normalized.includes("add") && (normalized.includes("file") || normalized.includes("content"))) ||
     normalized.includes("create file") ||
     normalized.includes("write file") ||
