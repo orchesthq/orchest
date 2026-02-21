@@ -19,6 +19,15 @@ type Memory = {
   created_at: string;
 };
 
+type SlackLink = {
+  id: string;
+  dm_channel_id: string | null;
+  team_id: string;
+  display_name: string;
+  icon_url: string | null;
+  created_at: string;
+};
+
 export default async function AgentPage({
   params,
 }: {
@@ -47,6 +56,7 @@ export default async function AgentPage({
 
   let agentResp: { agent: Agent } | null = null;
   let memResp: { memories: Memory[] } | null = null;
+  let slackLinkResp: { link: SlackLink | null } | null = null;
   let loadError: string | null = null;
   try {
     agentResp = await apiFetchForClient<{ agent: Agent }>(
@@ -58,6 +68,12 @@ export default async function AgentPage({
     memResp = await apiFetchForClient<{ memories: Memory[] }>(
       clientId,
       `/agents/${agentIdParsed.data}/memories?memoryType=profile&limit=1`,
+      { method: "GET" }
+    );
+
+    slackLinkResp = await apiFetchForClient<{ link: SlackLink | null }>(
+      clientId,
+      `/internal/slack/agents/${agentIdParsed.data}/link`,
       { method: "GET" }
     );
   } catch (err) {
@@ -89,6 +105,7 @@ export default async function AgentPage({
   }
 
   const latestProfile = memResp?.memories?.[0]?.content ?? "";
+  const slackLink = slackLinkResp?.link ?? null;
 
   return (
     <div className="space-y-6">
@@ -115,6 +132,33 @@ export default async function AgentPage({
           initialSystemPrompt={agentResp.agent.system_prompt}
           initialProfileMemory={latestProfile}
         />
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-900">Slack</h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              Enable this agent in Slack to create a DM and send an onboarding message.
+            </p>
+            {slackLink?.dm_channel_id ? (
+              <p className="mt-2 text-xs text-emerald-700">
+                Enabled (DM channel: {slackLink.dm_channel_id})
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-zinc-500">Not enabled yet.</p>
+            )}
+          </div>
+
+          <form action={`/app/agents/${agentIdParsed.data}/slack/enable`} method="post">
+            <button
+              type="submit"
+              className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Enable in Slack
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

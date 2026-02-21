@@ -20,6 +20,7 @@ npm install
 3. Apply migrations to your Postgres database (Supabase SQL editor is fine):
    - `migrations/001_init.sql`
    - `migrations/002_auth_and_membership.sql`
+   - `migrations/003_slack_integration.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
@@ -67,6 +68,46 @@ This starts:
    - `fly secrets set DATABASE_URL=... INTERNAL_SERVICE_SECRET=...`
 4. Deploy:
    - `fly deploy`
+
+## Slack integration (single app, many personas)
+
+This MVP uses **one Slack app per workspace** and supports **multiple agent personas** (Ava, Ben, etc.) behind the scenes.
+
+### 1) Create a Slack App
+
+- Create a Slack app in your workspace (from `api.slack.com/apps`).
+- Enable **OAuth & Permissions** and set the redirect URL:
+  - `https://<your-fly-app>.fly.dev/integrations/slack/callback`
+- Add **Bot Token Scopes**:
+  - `chat:write`
+  - `chat:write.customize`
+  - `im:write`
+  - `app_mentions:read`
+  - `channels:read`, `groups:read`, `im:read`, `mpim:read`
+
+### 2) Configure Event Subscriptions
+
+- Enable **Event Subscriptions**
+- Set Request URL:
+  - `https://<your-fly-app>.fly.dev/integrations/slack/events`
+- Subscribe to bot events:
+  - `app_mention`
+  - `message.im`
+
+### 3) Set API env vars (Fly secrets)
+
+Set these on your Fly API app:
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_SIGNING_SECRET`
+- `SLACK_REDIRECT_URI` (must match the redirect URL configured in Slack)
+- `DASHBOARD_BASE_URL` (your Vercel dashboard URL)
+
+### 4) Connect + enable from dashboard
+
+- Go to `Dashboard → Slack integration` (`/app/integrations/slack`) and click **Connect Slack**
+- Open an Agent and click **Enable in Slack**
+  - Orchest will open a DM with the installing Slack user and send the agent onboarding message.
 
 ## Design notes
 
