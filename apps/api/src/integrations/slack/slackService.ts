@@ -428,22 +428,29 @@ async function runTaskAndReply(input: {
   const agent = await getAgentByIdScoped(input.installation.client_id, input.agentLink.agent_id);
   if (!agent) return;
 
-  // Ack quickly.
-  await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-    channel: input.channel,
-    thread_ts: input.threadTs,
-    text: "Got it — I’m on it.",
-    username: input.agentLink.display_name,
-    icon_url: input.agentLink.icon_url ?? undefined,
-  });
-
   const task = await createTaskForAgentScoped({
     clientId: input.installation.client_id,
     agentId: agent.id,
     taskInput: input.taskText,
   });
 
-  void runAgentTask(task.id)
+  const formatPlanForUser = (plan: { steps: string[]; notes?: string }): string => {
+    if (plan.steps.length === 0) return "Got it — I'm on it.";
+    const steps = plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+    return `Got it — I'm on it.\n\nI'll:\n${steps}`;
+  };
+
+  void runAgentTask(task.id, {
+    onPlanReady: async (plan) => {
+      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+        channel: input.channel,
+        thread_ts: input.threadTs,
+        text: formatPlanForUser(plan),
+        username: input.agentLink.display_name,
+        icon_url: input.agentLink.icon_url ?? undefined,
+      });
+    },
+  })
     .then(async (result) => {
       await slackApi(input.installation.bot_access_token, "chat.postMessage", {
         channel: input.channel,

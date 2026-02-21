@@ -81,6 +81,9 @@ export async function create_branch(
     return { ok: true, message: `Created branch '${input.branch}' from '${input.base}'.` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (/reference already exists|already exists/i.test(msg)) {
+      return { ok: true, message: `Branch '${input.branch}' already exists, proceeding.` };
+    }
     return { ok: false, message: `Failed to create branch: ${msg}` };
   }
 }

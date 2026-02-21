@@ -112,11 +112,22 @@ export async function planTask(input: {
           .map((m) => `- [${m.memory_type}] ${m.content}`)
           .join("\n");
 
+  const toolDescriptions = [
+    "## Available tools (use ONLY these – no local machine, no clone)",
+    "- create_branch: Create a new branch from main via GitHub API",
+    "- create_file_and_commit: Add or modify a file and commit directly to GitHub (no clone – API does it)",
+    "- open_pull_request: Open a PR from the branch to main",
+    "",
+    "You work entirely via GitHub REST API. There is NO localhost, NO clone, NO local git. Commits go directly to the remote. Do NOT output steps like 'clone', 'access repo', 'stage', 'push' – they are not supported.",
+  ].join("\n");
+
   const system = [
     input.agentSystemPrompt,
     "",
     "You are planning work for the next task. Return ONLY valid JSON.",
     'JSON schema: {"steps": string[], "notes"?: string}',
+    "",
+    toolDescriptions,
   ].join("\n");
 
   const user = [
@@ -126,7 +137,7 @@ export async function planTask(input: {
     "## Relevant memories",
     memoryBlock,
     "",
-    "Create a concise, executable step-by-step plan. Keep steps tool-friendly and unambiguous.",
+    "Create a concise plan. Each step must match a tool: create_branch, create_file_and_commit (for adding/modifying files), or open_pull_request. Use phrases like 'create branch', 'add file X', 'create file X', 'open pull request'.",
   ].join("\n");
 
   const content = await chatCompletion({ system, user });

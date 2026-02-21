@@ -25,7 +25,14 @@ export type AgentExecutionResult = {
   summary: string;
 };
 
-export async function runAgentTask(taskId: string): Promise<AgentExecutionResult> {
+export type RunAgentTaskOptions = {
+  onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
+};
+
+export async function runAgentTask(
+  taskId: string,
+  options?: RunAgentTaskOptions
+): Promise<AgentExecutionResult> {
   const ctx = await getTaskContextById(taskId);
 
   try {
@@ -42,6 +49,10 @@ export async function runAgentTask(taskId: string): Promise<AgentExecutionResult
       agent: ctx.agent,
       memories,
     });
+
+    if (options?.onPlanReady) {
+      await options.onPlanReady(plan);
+    }
 
     const executed: Array<{ step: string; result: string }> = [];
     const githubCtx = { clientId: ctx.client.id, agentId: ctx.agent.id };
@@ -87,7 +98,11 @@ async function executeStep(
   const normalized = step.toLowerCase();
   const branch = `task-${ctx.taskId.slice(0, 8)}`;
 
-  if (normalized.includes("create_branch") || normalized.includes("create branch")) {
+  if (
+    normalized.includes("create_branch") ||
+    normalized.includes("create branch") ||
+    normalized.includes("new branch")
+  ) {
     const r = await create_branch(
       { repo: "", base: "main", branch },
       githubCtx
@@ -96,8 +111,9 @@ async function executeStep(
   }
 
   if (
-    (normalized.includes("add") && normalized.includes("file")) ||
+    (normalized.includes("add") && (normalized.includes("file") || normalized.includes("content"))) ||
     normalized.includes("create file") ||
+    normalized.includes("write file") ||
     normalized.includes("hello-world") ||
     normalized.includes("hello world")
   ) {
@@ -123,7 +139,8 @@ async function executeStep(
   if (
     normalized.includes("pull request") ||
     normalized.includes("open_pull_request") ||
-    normalized.includes("open pr")
+    normalized.includes("open pr") ||
+    (normalized.includes("pr") && (normalized.includes("open") || normalized.includes("create")))
   ) {
     const r = await open_pull_request(
       {
