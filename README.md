@@ -98,7 +98,24 @@ Each bot is a separate Slack app, but they all point to the **same Orchest API e
   - `app_mention`
   - `message.im`
 
-### 3) Set API env vars (Fly secrets)
+### 3) Enable Direct Messages (required for DMs)
+
+Users must be able to send messages to your bot. In each Slack app:
+
+1. Go to **App Home** (sidebar) → **Allow users to send Slash commands and messages from the messages tab** → enable.
+2. Or edit the **App Manifest** and add:
+
+```yaml
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+```
+
+Without this, users see "Sending messages to this app has been turned off" and cannot DM the bot.
+
+### 4) Set API env vars (Fly secrets)
 
 Set these on your Fly API app:
 - `SLACK_BOT_KEYS` (comma-separated: `ava,ben,priya,sofia,amira`)
@@ -108,11 +125,18 @@ Set these on your Fly API app:
 - `SLACK_REDIRECT_URI` (must match the redirect URL configured in Slack)
 - `DASHBOARD_BASE_URL` (your Vercel dashboard URL)
 
-### 4) Connect + enable from dashboard
+### 5) Connect + enable from dashboard
 
 - Go to `Dashboard → Slack integration` (`/app/integrations/slack`) and install each bot you want (Ava, Priya, ...)
 - Open an Agent and click **Enable in Slack** under the chosen bot identity
   - Orchest will open a DM with the installing Slack user and send the agent onboarding message.
+
+## Roadmap
+
+See [ROADMAP.md](./ROADMAP.md) for plans around:
+- Company context (RAG, document ingestion)
+- Tooling: GitHub, Jira, Confluence
+- Dogfooding Orchest with its own AI agents
 
 ## Design notes
 

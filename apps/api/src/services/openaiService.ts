@@ -10,6 +10,11 @@ export type PlanOutput = {
   notes?: string;
 };
 
+/** For Slack: either a quick conversational reply or hand off to full task flow. */
+export type ConversationalResult =
+  | { type: "chat"; reply: string }
+  | { type: "task" };
+
 const planSchema = z.object({
   steps: z.array(z.string().min(1)).min(1),
   notes: z.string().optional(),
@@ -164,6 +169,37 @@ export async function summarizeResults(input: {
   const parsed = summarySchema.safeParse(maybeJson);
   if (!parsed.success) return deterministicMockSummary(input);
   return parsed.data.summary;
+}
+
+/**
+ * Classifies a Slack message: greeting/quick chat → natural reply; work request → hand off to task flow.
+ * Responds like a colleague: brief, human. No "Got it — I'm on it" for simple exchanges.
+ */
+export async function tryConversationalReply(input: {
+  agentName: string;
+  agentRole: string;
+  systemPrompt: string;
+  userMessage: string;
+}): Promise<ConversationalResult> {
+  if (!hasApiKey()) return { type: "task" };
+
+  const system = [
+    input.systemPrompt,
+    "",
+    "You are " + input.agentName + " (" + input.agentRole + ") chatting in Slack. Be a helpful colleague: natural, brief, human.",
+    "",
+    "If the user's message is a greeting, quick question, small talk, or simple request for info, reply in 1–2 short sentences. No JSON, no code blocks.",
+    'If it is a work request (code, docs, research, multi-step task), reply with exactly "__TASK__" and nothing else.',
+  ].join("\n");
+
+  const user = input.userMessage;
+
+  const content = await chatCompletion({ system, user });
+  const trimmed = content.trim();
+  if (trimmed === "__TASK__" || trimmed.toLowerCase().includes("__task__")) {
+    return { type: "task" };
+  }
+  return { type: "chat", reply: trimmed };
 }
 
 function safeParseJson(text: string): unknown {

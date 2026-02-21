@@ -14,6 +14,7 @@ import {
 } from "../../db/schema";
 import { createTaskForAgentScoped } from "../../db/schema";
 import { runAgentTask } from "../../agent/agentLoop";
+import { tryConversationalReply } from "../../services/openaiService";
 
 export class SlackConfigError extends Error {
   constructor(message: string) {
@@ -325,6 +326,27 @@ async function handleDirectMessage(input: {
   const taskText = normalizeSlackText(input.text);
   if (!taskText) return;
 
+  const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
+  if (!agent) return;
+
+  const conversational = await tryConversationalReply({
+    agentName: agent.name,
+    agentRole: agent.role,
+    systemPrompt: agent.system_prompt,
+    userMessage: taskText,
+  });
+
+  if (conversational.type === "chat") {
+    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+      channel: input.channel,
+      thread_ts: input.ts,
+      text: conversational.reply,
+      username: link.display_name,
+      icon_url: link.icon_url ?? undefined,
+    });
+    return;
+  }
+
   await runTaskAndReply({
     installation: input.installation,
     agentLink: link,
@@ -344,7 +366,6 @@ async function handleAppMention(input: {
   const cleaned = normalizeSlackText(input.text);
   if (!cleaned) return;
 
-  // Multi-bot model: the bot identity itself selects the agent (via slack_agent_links.bot_key).
   const botKey = (input.installation as any).bot_key ?? "orchest";
   const link = await getSlackAgentLinkByTeamAndBotKey({
     teamId: input.installation.team_id,
@@ -356,6 +377,27 @@ async function handleAppMention(input: {
       channel: input.channel,
       thread_ts: input.ts,
       text: "This bot is installed, but no agent is linked to it yet. Enable an agent from the Orchest dashboard first.",
+    });
+    return;
+  }
+
+  const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
+  if (!agent) return;
+
+  const conversational = await tryConversationalReply({
+    agentName: agent.name,
+    agentRole: agent.role,
+    systemPrompt: agent.system_prompt,
+    userMessage: cleaned,
+  });
+
+  if (conversational.type === "chat") {
+    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+      channel: input.channel,
+      thread_ts: input.ts,
+      text: conversational.reply,
+      username: link.display_name,
+      icon_url: link.icon_url ?? undefined,
     });
     return;
   }
