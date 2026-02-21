@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
+import { getClientIdFromSession } from "@/lib/session";
 
 type SlackStatus = {
   bots: Record<
@@ -14,7 +15,7 @@ type SlackStatus = {
 
 export default async function SlackIntegrationPage() {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId;
+  const clientId = getClientIdFromSession(session);
 
   if (!clientId) {
     return (

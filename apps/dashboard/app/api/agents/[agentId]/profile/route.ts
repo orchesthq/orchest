@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { z } from "zod";
 import { apiFetchForClient } from "@/lib/apiForClient";
+import { getClientIdFromSession } from "@/lib/session";
 
 const schema = z.object({
   content: z.string().min(1),
@@ -13,7 +14,7 @@ export async function POST(
   { params }: { params: Promise<{ agentId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId;
+  const clientId = getClientIdFromSession(session);
   if (!clientId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { agentId } = await params;

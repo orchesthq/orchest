@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { z } from "zod";
 import { apiFetchForClient } from "@/lib/apiForClient";
+import { getClientIdFromSession } from "@/lib/session";
 
 const createSchema = z.object({
   personaKey: z.string().min(1).optional(),
@@ -13,7 +14,7 @@ const createSchema = z.object({
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId;
+  const clientId = getClientIdFromSession(session);
   if (!clientId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const json = await req.json().catch(() => null);

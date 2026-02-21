@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
+import { getClientIdFromSession } from "@/lib/session";
 
 export default async function DashboardHome() {
   const session = await getServerSession(authOptions);
+  const userEmail = (session as any)?.user?.email as string | undefined;
+  const clientId = getClientIdFromSession(session);
 
   return (
     <div className="space-y-6">
@@ -12,7 +15,7 @@ export default async function DashboardHome() {
           Client dashboard
         </h1>
         <p className="mt-2 text-sm text-zinc-600">
-          You’re signed in as <span className="font-medium">{session?.user?.email}</span>.
+          You’re signed in as <span className="font-medium">{userEmail ?? "unknown"}</span>.
         </p>
         <p className="mt-1 text-sm text-zinc-600">
           Next: we’ll display and manage your agents here.

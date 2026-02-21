@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
+import { getClientIdFromSession } from "@/lib/session";
 
 export default async function Home() {
   const session = await getServerSession(authOptions);
+  const clientId = getClientIdFromSession(session);
 
-  if (session?.user?.clientId) {
+  if (clientId) {
     // Middleware also protects /app, but this improves the default landing experience.
     return (
       <div className="min-h-screen bg-zinc-50">

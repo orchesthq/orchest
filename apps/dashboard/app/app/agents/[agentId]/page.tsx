@@ -5,6 +5,7 @@ import { apiFetchForClient } from "@/lib/apiForClient";
 import { AgentEditor } from "./AgentEditor";
 import { z } from "zod";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
+import { getClientIdFromSession } from "@/lib/session";
 
 type Agent = {
   id: string;
@@ -45,7 +46,7 @@ export default async function AgentPage({
   params: Promise<{ agentId: string }>;
 }) {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId;
+  const clientId = getClientIdFromSession(session);
 
   if (!clientId) {
     return (

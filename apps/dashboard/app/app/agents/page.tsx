@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
+import { getClientIdFromSession } from "@/lib/session";
 
 type Agent = {
   id: string;
@@ -12,7 +13,7 @@ type Agent = {
 
 export default async function AgentsPage() {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId;
+  const clientId = getClientIdFromSession(session);
 
   if (!clientId) {
     return (

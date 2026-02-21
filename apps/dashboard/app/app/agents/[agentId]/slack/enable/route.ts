@@ -3,13 +3,14 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { z } from "zod";
 import { apiFetchForClient } from "@/lib/apiForClient";
+import { getClientIdFromSession } from "@/lib/session";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId;
+  const clientId = getClientIdFromSession(session);
   if (!clientId) return NextResponse.redirect(new URL("/sign-in", process.env.NEXTAUTH_URL));
 
   const { agentId } = await params;

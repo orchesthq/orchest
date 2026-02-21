@@ -3,10 +3,11 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { SignOutButton } from "./SignOutButton";
 import { apiGetClientById } from "@/lib/internalApi";
+import { getClientIdFromSession } from "@/lib/session";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
-  const clientId = session?.user?.clientId ?? null;
+  const clientId = getClientIdFromSession(session);
   const clientName =
     clientId != null ? (await apiGetClientById({ clientId }).catch(() => null))?.name : null;
 
