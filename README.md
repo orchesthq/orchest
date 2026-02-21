@@ -24,6 +24,8 @@ npm install
    - `migrations/004_slack_multi_bot_apps.sql`
    - `migrations/005_orchest_personas.sql`
    - `migrations/006_backfill_persona_key_from_name.sql`
+   - `migrations/007_slack_oauth_agent_id.sql`
+   - `migrations/008_github_integration.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
@@ -130,6 +132,33 @@ Set these on your Fly API app:
 - Go to `Dashboard → Slack integration` (`/app/integrations/slack`) and install each bot you want (Ava, Priya, ...)
 - Open an Agent and click **Enable in Slack** under the chosen bot identity
   - Orchest will open a DM with the installing Slack user and send the agent onboarding message.
+
+## GitHub integration (per-agent)
+
+Each agent can be linked to GitHub with its own commit identity (e.g. "Ava (Acme)" vs "Ben (Acme)" in git history).
+
+### 1) Create a GitHub App
+
+1. Go to [GitHub → Settings → Developer settings → GitHub Apps → New GitHub App](https://github.com/settings/apps/new)
+2. **Name:** Orchest
+3. **Homepage URL:** your dashboard URL
+4. **Setup URL (post-install redirect):** `https://<dashboard>/app/integrations/github/callback`
+5. **Permissions:** Repository → Contents (Read and write), Pull requests (Read and write), Metadata (Read)
+6. Create the app, then under "About" note the **App ID** and **slug** (from the URL). Generate a **private key**.
+
+### 2) Set API env vars
+
+- `GITHUB_APP_ID` – App ID (number)
+- `GITHUB_APP_PRIVATE_KEY` – PEM content (use `\n` for newlines in env)
+- `GITHUB_APP_SLUG` – app slug (e.g. `orchest` from `github.com/apps/orchest`)
+
+### 3) Connect from dashboard
+
+- Open an Agent → **GitHub** section → **Connect GitHub** (if not yet connected)
+- Install the app on your org/repos
+- **Link to GitHub** – set commit author name/email for this agent
+
+See [docs/GITHUB_INTEGRATION_DESIGN.md](./docs/GITHUB_INTEGRATION_DESIGN.md) for full design.
 
 ## Roadmap
 

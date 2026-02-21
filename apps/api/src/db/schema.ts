@@ -105,6 +105,29 @@ export type SlackAgentLinkRow = {
   created_at: string;
 };
 
+export type GitHubInstallationRow = {
+  id: string;
+  client_id: string;
+  installation_id: number;
+  owner_login: string;
+  access_token: string;
+  token_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GitHubAgentConnectionRow = {
+  id: string;
+  agent_id: string;
+  github_installation_id: string;
+  commit_author_name: string;
+  commit_author_email: string;
+  access_level: "read" | "pr_only" | "direct_push";
+  default_branch: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export const DEFAULT_SOFTWARE_ENGINEER_SYSTEM_PROMPT =
   "You are an AI Software Engineer employed by the client. You complete software engineering tasks reliably, communicate clearly, and follow best practices.";
 
@@ -758,5 +781,119 @@ export async function addAgentMemoryScoped(input: {
   );
 
   return one(rows, "Agent not found for client (cannot add memory)");
+}
+
+export async function getGitHubInstallationByClientId(
+  clientId: string
+): Promise<GitHubInstallationRow | null> {
+  assertUuid(clientId, "clientId");
+  const { rows } = await query<GitHubInstallationRow>(
+    [
+      "select id, client_id, installation_id, owner_login, access_token, token_expires_at, created_at, updated_at",
+      "from github_installations",
+      "where client_id = $1",
+      "limit 1",
+    ].join("\n"),
+    [clientId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function getGitHubInstallationById(
+  id: string
+): Promise<GitHubInstallationRow | null> {
+  assertUuid(id, "id");
+  const { rows } = await query<GitHubInstallationRow>(
+    [
+      "select id, client_id, installation_id, owner_login, access_token, token_expires_at, created_at, updated_at",
+      "from github_installations",
+      "where id = $1",
+      "limit 1",
+    ].join("\n"),
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+export async function upsertGitHubInstallation(input: {
+  clientId: string;
+  installationId: number;
+  ownerLogin: string;
+  accessToken: string;
+  tokenExpiresAt: Date | null;
+}): Promise<GitHubInstallationRow> {
+  assertUuid(input.clientId, "clientId");
+  const { rows } = await query<GitHubInstallationRow>(
+    [
+      "insert into github_installations (client_id, installation_id, owner_login, access_token, token_expires_at, updated_at)",
+      "values ($1, $2, $3, $4, $5, now())",
+      "on conflict (client_id) do update set",
+      "  installation_id = excluded.installation_id,",
+      "  owner_login = excluded.owner_login,",
+      "  access_token = excluded.access_token,",
+      "  token_expires_at = excluded.token_expires_at,",
+      "  updated_at = now()",
+      "returning id, client_id, installation_id, owner_login, access_token, token_expires_at, created_at, updated_at",
+    ].join("\n"),
+    [
+      input.clientId,
+      input.installationId,
+      input.ownerLogin,
+      input.accessToken,
+      input.tokenExpiresAt?.toISOString() ?? null,
+    ]
+  );
+  return one(rows, "Failed to upsert GitHub installation");
+}
+
+export async function getGitHubAgentConnectionByAgentId(
+  agentId: string
+): Promise<GitHubAgentConnectionRow | null> {
+  assertUuid(agentId, "agentId");
+  const { rows } = await query<GitHubAgentConnectionRow>(
+    [
+      "select id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, created_at, updated_at",
+      "from github_agent_connections",
+      "where agent_id = $1",
+      "limit 1",
+    ].join("\n"),
+    [agentId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function createGitHubAgentConnection(input: {
+  agentId: string;
+  githubInstallationId: string;
+  commitAuthorName: string;
+  commitAuthorEmail: string;
+  accessLevel: "read" | "pr_only" | "direct_push";
+  defaultBranch: string;
+}): Promise<GitHubAgentConnectionRow> {
+  assertUuid(input.agentId, "agentId");
+  assertUuid(input.githubInstallationId, "githubInstallationId");
+  const { rows } = await query<GitHubAgentConnectionRow>(
+    [
+      "insert into github_agent_connections (agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, updated_at)",
+      "values ($1, $2, $3, $4, $5, $6, now())",
+      "on conflict (agent_id) do update set",
+      "  github_installation_id = excluded.github_installation_id,",
+      "  commit_author_name = excluded.commit_author_name,",
+      "  commit_author_email = excluded.commit_author_email,",
+      "  access_level = excluded.access_level,",
+      "  default_branch = excluded.default_branch,",
+      "  updated_at = now()",
+      "returning id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, created_at, updated_at",
+    ].join("\n"),
+    [
+      input.agentId,
+      input.githubInstallationId,
+      input.commitAuthorName,
+      input.commitAuthorEmail,
+      input.accessLevel,
+      input.defaultBranch,
+    ]
+  );
+  return one(rows, "Failed to create GitHub agent connection");
 }
 

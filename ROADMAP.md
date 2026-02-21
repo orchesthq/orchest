@@ -34,6 +34,8 @@
 
 **Goal:** Agents can take real actions: update code, create/update Jira issues, edit Confluence pages.
 
+**Design:** See [docs/GITHUB_INTEGRATION_DESIGN.md](../docs/GITHUB_INTEGRATION_DESIGN.md) for the full GitHub integration design: dashboard connect flow, access levels (read-only / PR-only / direct push), repo selection, and implementation phases.
+
 ### Dogfooding: Orchest with Orchest
 
 Develop Orchest using its own AI agents:

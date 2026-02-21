@@ -1,0 +1,50 @@
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/auth";
+import { apiFetchForClient } from "@/lib/apiForClient";
+import { getClientIdFromSession } from "@/lib/session";
+import { z } from "zod";
+
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ agentId: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  const clientId = getClientIdFromSession(session);
+  if (!clientId) {
+    return NextResponse.redirect(new URL("/sign-in", process.env.NEXTAUTH_URL));
+  }
+
+  const { agentId } = await params;
+  const agentIdParsed = z.string().uuid().safeParse(agentId);
+  if (!agentIdParsed.success) {
+    return NextResponse.redirect(new URL("/app/agents", process.env.NEXTAUTH_URL));
+  }
+
+  const formData = await req.formData();
+  const commitAuthorName = (formData.get("commitAuthorName") as string)?.trim() ?? "";
+  const commitAuthorEmail = (formData.get("commitAuthorEmail") as string)?.trim() ?? "";
+
+  try {
+    await apiFetchForClient(clientId, `/internal/github/agents/${agentIdParsed.data}/link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        commitAuthorName: commitAuthorName || undefined,
+        commitAuthorEmail: commitAuthorEmail || undefined,
+      }),
+    });
+  } catch (err) {
+    console.error("[github] link failed", err);
+    return NextResponse.redirect(
+      new URL(
+        `/app/agents/${agentIdParsed.data}?error=github_link_failed`,
+        process.env.NEXTAUTH_URL
+      )
+    );
+  }
+
+  return NextResponse.redirect(
+    new URL(`/app/agents/${agentIdParsed.data}?github=linked`, process.env.NEXTAUTH_URL)
+  );
+}

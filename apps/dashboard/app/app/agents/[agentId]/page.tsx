@@ -40,6 +40,20 @@ type SlackStatus = {
   >;
 };
 
+type GitHubStatus = {
+  connected: boolean;
+  configured?: boolean;
+  ownerLogin?: string;
+};
+
+type GitHubConnection = {
+  id: string;
+  commit_author_name: string;
+  commit_author_email: string;
+  access_level: string;
+  default_branch: string;
+};
+
 export default async function AgentPage({
   params,
 }: {
@@ -70,6 +84,8 @@ export default async function AgentPage({
   let memResp: { memories: Memory[] } | null = null;
   let slackStatus: SlackStatus | null = null;
   let slackLink: SlackLink | null = null;
+  let githubStatus: GitHubStatus | null = null;
+  let githubConnection: GitHubConnection | null = null;
   let loadError: string | null = null;
   try {
     agentResp = await apiFetchForClient<{ agent: Agent }>(
@@ -98,6 +114,25 @@ export default async function AgentPage({
       slackLink = linkResp.link ?? null;
     } catch {
       slackLink = null;
+    }
+
+    try {
+      githubStatus = await apiFetchForClient<GitHubStatus>(clientId, "/internal/github/status", {
+        method: "GET",
+      });
+    } catch {
+      githubStatus = null;
+    }
+
+    try {
+      const connResp = await apiFetchForClient<{ connection: GitHubConnection }>(
+        clientId,
+        `/internal/github/agents/${agentIdParsed.data}/connection`,
+        { method: "GET" }
+      );
+      githubConnection = connResp.connection ?? null;
+    } catch {
+      githubConnection = null;
     }
   } catch (err) {
     loadError = err instanceof Error ? err.message : String(err);
@@ -173,6 +208,112 @@ export default async function AgentPage({
           >
             {isLinked ? "Reinstall in Slack" : "Install in Slack"}
           </Link>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+        <div className="flex flex-col gap-6">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-900">GitHub</h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              Link this agent to GitHub so it can create branches, commit, and open PRs. Each agent appears as a separate user in GitHub (via commit author).
+            </p>
+          </div>
+
+          {!githubStatus?.configured ? (
+            <p className="text-xs text-zinc-500">
+              GitHub integration is not configured. Set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_SLUG in the API.
+            </p>
+          ) : !githubStatus?.connected ? (
+            <Link
+              href={`/app/integrations/github/connect?returnTo=${encodeURIComponent(`/app/agents/${agentIdParsed.data}`)}`}
+              className="inline-flex w-fit items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Connect GitHub
+            </Link>
+          ) : githubConnection ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-emerald-700">
+                <span>Linked as</span>
+                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">
+                  {githubConnection.commit_author_name} &lt;{githubConnection.commit_author_email}&gt;
+                </code>
+              </div>
+              <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label htmlFor="commitAuthorName" className="block text-xs font-medium text-zinc-500">
+                      Commit author name
+                    </label>
+                    <input
+                      id="commitAuthorName"
+                      name="commitAuthorName"
+                      type="text"
+                      defaultValue={githubConnection.commit_author_name}
+                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                      placeholder={agentResp.agent.name}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="commitAuthorEmail" className="block text-xs font-medium text-zinc-500">
+                      Commit author email
+                    </label>
+                    <input
+                      id="commitAuthorEmail"
+                      name="commitAuthorEmail"
+                      type="email"
+                      defaultValue={githubConnection.commit_author_email}
+                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                      placeholder="ava@agents.orchest.io"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Update
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label htmlFor="commitAuthorName" className="block text-xs font-medium text-zinc-500">
+                    Commit author name
+                  </label>
+                  <input
+                    id="commitAuthorName"
+                    name="commitAuthorName"
+                    type="text"
+                    defaultValue={agentResp.agent.name}
+                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                    placeholder={agentResp.agent.name}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="commitAuthorEmail" className="block text-xs font-medium text-zinc-500">
+                    Commit author email
+                  </label>
+                  <input
+                    id="commitAuthorEmail"
+                    name="commitAuthorEmail"
+                    type="email"
+                    defaultValue={`${agentResp.agent.name.toLowerCase().replace(/\s+/g, "-")}@agents.orchest.io`}
+                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                    placeholder="ava@agents.orchest.io"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="h-9 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                >
+                  Link to GitHub
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </div>
 
