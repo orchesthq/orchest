@@ -45,19 +45,50 @@ export default async function AgentPage({
     );
   }
 
-  const agentResp = await apiFetchForClient<{ agent: Agent }>(
-    clientId,
-    `/agents/${agentIdParsed.data}`,
-    { method: "GET" }
-  );
+  let agentResp: { agent: Agent } | null = null;
+  let memResp: { memories: Memory[] } | null = null;
+  let loadError: string | null = null;
+  try {
+    agentResp = await apiFetchForClient<{ agent: Agent }>(
+      clientId,
+      `/agents/${agentIdParsed.data}`,
+      { method: "GET" }
+    );
 
-  const memResp = await apiFetchForClient<{ memories: Memory[] }>(
-    clientId,
-    `/agents/${agentIdParsed.data}/memories?memoryType=profile&limit=1`,
-    { method: "GET" }
-  );
+    memResp = await apiFetchForClient<{ memories: Memory[] }>(
+      clientId,
+      `/agents/${agentIdParsed.data}/memories?memoryType=profile&limit=1`,
+      { method: "GET" }
+    );
+  } catch (err) {
+    loadError = err instanceof Error ? err.message : String(err);
+  }
 
-  const latestProfile = memResp.memories?.[0]?.content ?? "";
+  if (loadError || !agentResp) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Agent</h1>
+            <p className="mt-1 text-sm text-zinc-600">Unable to load agent details.</p>
+          </div>
+          <Link
+            href="/app/agents"
+            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+          >
+            Back
+          </Link>
+        </div>
+
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm">
+          <div className="font-medium">Couldn’t load agent</div>
+          <div className="mt-2 whitespace-pre-wrap font-mono text-xs">{loadError ?? "Unknown error"}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const latestProfile = memResp?.memories?.[0]?.content ?? "";
 
   return (
     <div className="space-y-6">
