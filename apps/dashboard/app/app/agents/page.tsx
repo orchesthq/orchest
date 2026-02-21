@@ -3,6 +3,7 @@ import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { getClientIdFromSession } from "@/lib/session";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
+import Image from "next/image";
 import { AgentCardActions } from "./AgentCardActions";
 
 type Agent = {
@@ -97,9 +98,20 @@ export default async function AgentsPage() {
               className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm"
             >
               <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-base font-semibold text-zinc-900">{p.name}</div>
-                  <div className="mt-1 text-sm text-zinc-600">{p.description}</div>
+                <div className="flex items-start gap-4">
+                  <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full border-2 border-zinc-100 ring-2 ring-zinc-200/50">
+                    <Image
+                      src={p.imagePath}
+                      alt={p.name}
+                      fill
+                      className="object-cover"
+                      sizes="56px"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-base font-semibold text-zinc-900">{p.name}</div>
+                    <div className="mt-1 text-sm text-zinc-600">{p.description}</div>
+                  </div>
                 </div>
                 <div className="text-xs text-zinc-500">{p.key}</div>
               </div>

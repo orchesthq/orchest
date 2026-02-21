@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
@@ -6,6 +7,7 @@ import { AgentEditor } from "./AgentEditor";
 import { DisableButton } from "./DisableButton";
 import { z } from "zod";
 import { getClientIdFromSession } from "@/lib/session";
+import { getPersonaByKey } from "@/lib/personas";
 
 type Agent = {
   id: string;
@@ -180,15 +182,29 @@ export default async function AgentPage({
   const latestProfile = memResp?.memories?.[0]?.content ?? "";
   const botKey = agentResp.agent.persona_key ?? "ava";
   const isLinked = Boolean(slackLink);
+  const persona = getPersonaByKey(botKey);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
-            {agentResp.agent.name}
-          </h1>
-          <p className="mt-1 text-sm text-zinc-600">{agentResp.agent.role}</p>
+        <div className="flex items-center gap-4">
+          {persona?.imagePath && (
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-zinc-100 ring-2 ring-zinc-200/50">
+              <Image
+                src={persona.imagePath}
+                alt={agentResp.agent.name}
+                fill
+                className="object-cover"
+                sizes="64px"
+              />
+            </div>
+          )}
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
+              {agentResp.agent.name}
+            </h1>
+            <p className="mt-1 text-sm text-zinc-600">{agentResp.agent.role}</p>
+          </div>
         </div>
         <Link
           href="/app/agents"
