@@ -12,11 +12,7 @@ export function createApp() {
   const app = express();
 
   // Slack Events API requires raw body for signature verification.
-  app.post(
-    "/integrations/slack/events",
-    express.raw({ type: "application/json" }),
-    slackEventsHandler
-  );
+  app.post("/integrations/slack/events", express.raw({ type: "application/json" }), slackEventsHandler);
 
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));
@@ -30,12 +26,7 @@ export function createApp() {
 
   // Internal endpoints used by the dashboard server (requires shared secret).
   app.use("/internal/clients", requireInternalServiceAuth, clientRoutes);
-  app.use(
-    "/internal/slack",
-    requireInternalServiceAuth,
-    requireClientId,
-    slackInternalRoutes
-  );
+  app.use("/internal/slack", requireInternalServiceAuth, requireClientId, slackInternalRoutes);
 
   // API (requires a client context)
   app.use("/agents", requireClientId, agentRoutes);
@@ -47,11 +38,7 @@ export function createApp() {
   return app;
 }
 
-function requireClientId(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) {
+function requireClientId(req: express.Request, res: express.Response, next: express.NextFunction) {
   const raw = req.header("x-client-id");
   const parsed = z.string().uuid().safeParse(raw);
   if (!parsed.success) {
@@ -70,12 +57,7 @@ function notFoundHandler(_req: express.Request, res: express.Response) {
   res.status(404).json({ error: "Not found" });
 }
 
-function errorHandler(
-  err: unknown,
-  _req: express.Request,
-  res: express.Response,
-  _next: express.NextFunction
-) {
+function errorHandler(err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) {
   if (err instanceof ZodError) {
     res.status(400).json({ error: "Invalid request", issues: err.issues });
     return;
@@ -83,8 +65,7 @@ function errorHandler(
 
   if (err instanceof DbNotConfiguredError) {
     res.status(503).json({
-      error:
-        "Database is not configured. Set DATABASE_URL and apply migrations to enable persistence.",
+      error: "Database is not configured. Set DATABASE_URL and apply migrations to enable persistence.",
     });
     return;
   }
