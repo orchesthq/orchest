@@ -1,9 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
 
 type Props = {
   agentId: string;
+  personaKey: string | null;
   initialName: string;
   initialRole: string;
   initialSystemPrompt: string;
@@ -12,6 +14,7 @@ type Props = {
 
 export function AgentEditor(props: Props) {
   const [name, setName] = useState(props.initialName);
+  const [role, setRole] = useState(props.initialRole);
   const [systemPrompt, setSystemPrompt] = useState(props.initialSystemPrompt);
   const [profile, setProfile] = useState(props.initialProfileMemory);
   const [loading, setLoading] = useState(false);
@@ -20,11 +23,22 @@ export function AgentEditor(props: Props) {
 
   const dirty = useMemo(() => {
     return (
-      name !== props.initialName ||
+      (props.personaKey ? false : name !== props.initialName) ||
+      role !== props.initialRole ||
       systemPrompt !== props.initialSystemPrompt ||
       profile !== props.initialProfileMemory
     );
-  }, [name, systemPrompt, profile, props.initialName, props.initialSystemPrompt, props.initialProfileMemory]);
+  }, [
+    name,
+    role,
+    systemPrompt,
+    profile,
+    props.personaKey,
+    props.initialName,
+    props.initialRole,
+    props.initialSystemPrompt,
+    props.initialProfileMemory,
+  ]);
 
   return (
     <form
@@ -36,12 +50,17 @@ export function AgentEditor(props: Props) {
         setSavedAt(null);
 
         try {
-          if (name !== props.initialName || systemPrompt !== props.initialSystemPrompt) {
+          if (
+            (!props.personaKey && name !== props.initialName) ||
+            role !== props.initialRole ||
+            systemPrompt !== props.initialSystemPrompt
+          ) {
             const res = await fetch(`/api/agents/${props.agentId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                name: name !== props.initialName ? name : undefined,
+                name: !props.personaKey && name !== props.initialName ? name : undefined,
+                role: role !== props.initialRole ? role : undefined,
                 systemPrompt: systemPrompt !== props.initialSystemPrompt ? systemPrompt : undefined,
               }),
             });
@@ -73,8 +92,11 @@ export function AgentEditor(props: Props) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
+            disabled={Boolean(props.personaKey)}
           />
-          <p className="text-xs text-zinc-500">Role: {props.initialRole}</p>
+          <p className="text-xs text-zinc-500">
+            {props.personaKey ? "Persona name is fixed." : "Custom agent name."}
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -89,6 +111,31 @@ export function AgentEditor(props: Props) {
             Saved as a persistent profile memory; the latest entry is used as “current personality”.
           </p>
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-zinc-900">Role</label>
+        <select
+          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          value={role}
+          onChange={(e) => {
+            const nextRole = e.target.value;
+            setRole(nextRole);
+
+            const currentTemplate = getTemplateByRole(role);
+            const nextTemplate = getTemplateByRole(nextRole);
+            const isUsingTemplatePrompt =
+              currentTemplate && systemPrompt.trim() === currentTemplate.defaultSystemPrompt.trim();
+            if (isUsingTemplatePrompt && nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
+          }}
+        >
+          {AGENT_TEMPLATES.map((t) => (
+            <option key={t.role} value={t.role}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-zinc-500">Role can be changed without changing the persona name.</p>
       </div>
 
       <div className="space-y-2">

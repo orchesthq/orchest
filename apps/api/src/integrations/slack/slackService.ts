@@ -4,9 +4,9 @@ import {
   createSlackOauthState,
   getAgentByIdScoped,
   getSlackAgentLinkByDmChannelId,
-  getSlackInstallationByClientId,
-  getSlackInstallationByTeamId,
-  listAgentsScoped,
+  getSlackAgentLinkByTeamAndBotKey,
+  getSlackInstallationByClientIdAndBotKey,
+  getSlackInstallationByTeamIdAndApiAppId,
   upsertSlackAgentLink,
   upsertSlackInstallation,
   type SlackAgentLinkRow,
@@ -28,8 +28,38 @@ function requireEnv(name: string): string {
   return v;
 }
 
-export function getSlackAuthorizeUrl(input: { state: string }): string {
-  const clientId = requireEnv("SLACK_CLIENT_ID");
+function botKeyToPrefix(botKey: string): string {
+  return `SLACK_${botKey.toUpperCase()}`;
+}
+
+function getSlackBotClientId(botKey: string): string {
+  return requireEnv(`${botKeyToPrefix(botKey)}_CLIENT_ID`);
+}
+
+function getSlackBotClientSecret(botKey: string): string {
+  return requireEnv(`${botKeyToPrefix(botKey)}_CLIENT_SECRET`);
+}
+
+function getSlackBotSigningSecret(botKey: string): string {
+  return requireEnv(`${botKeyToPrefix(botKey)}_SIGNING_SECRET`);
+}
+
+export function listSlackBotKeys(): string[] {
+  const raw = requireEnv("SLACK_BOT_KEYS");
+  const keys = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (keys.length === 0) throw new SlackConfigError("SLACK_BOT_KEYS is empty");
+  return keys;
+}
+
+export function listSlackSigningSecrets(): string[] {
+  return listSlackBotKeys().map(getSlackBotSigningSecret);
+}
+
+export function getSlackAuthorizeUrl(input: { botKey: string; state: string }): string {
+  const clientId = getSlackBotClientId(input.botKey);
   const redirectUri = requireEnv("SLACK_REDIRECT_URI");
 
   // Bot scopes needed for: events + messaging + persona customization.
@@ -52,10 +82,18 @@ export function getSlackAuthorizeUrl(input: { state: string }): string {
   return url.toString();
 }
 
-export async function createSlackInstallState(clientId: string): Promise<string> {
+export async function createSlackInstallState(input: {
+  clientId: string;
+  botKey: string;
+}): Promise<string> {
   const state = crypto.randomBytes(24).toString("hex");
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await createSlackOauthState({ clientId, state, expiresAt });
+  await createSlackOauthState({
+    clientId: input.clientId,
+    botKey: input.botKey,
+    state,
+    expiresAt,
+  });
   return state;
 }
 
@@ -67,9 +105,10 @@ export async function handleSlackOAuthCallback(input: {
   if (!record) throw new Error("Invalid or expired Slack OAuth state");
 
   const clientId = record.client_id;
+  const botKey = (record as any).bot_key ?? "orchest";
 
-  const clientIdEnv = requireEnv("SLACK_CLIENT_ID");
-  const clientSecret = requireEnv("SLACK_CLIENT_SECRET");
+  const clientIdEnv = getSlackBotClientId(botKey);
+  const clientSecret = getSlackBotClientSecret(botKey);
   const redirectUri = requireEnv("SLACK_REDIRECT_URI");
 
   const res = await fetch("https://slack.com/api/oauth.v2.access", {
@@ -96,10 +135,13 @@ export async function handleSlackOAuthCallback(input: {
   const botUserId: string = json.bot_user_id;
   const botAccessToken: string = json.access_token;
   const installedByUserId: string = json.authed_user?.id;
+  const apiAppId: string | undefined = json.app_id;
 
   return await upsertSlackInstallation({
     clientId,
+    botKey,
     teamId,
+    apiAppId: apiAppId ?? null,
     teamName: teamName ?? null,
     enterpriseId: enterpriseId ?? null,
     botUserId,
@@ -129,6 +171,22 @@ export function verifySlackSignature(input: {
   return timingSafeEqual(expected, input.signature);
 }
 
+export function verifySlackSignatureAny(input: {
+  signingSecrets: string[];
+  timestamp: string | undefined;
+  signature: string | undefined;
+  rawBody: Buffer;
+}): boolean {
+  return input.signingSecrets.some((secret) =>
+    verifySlackSignature({
+      signingSecret: secret,
+      timestamp: input.timestamp,
+      signature: input.signature,
+      rawBody: input.rawBody,
+    })
+  );
+}
+
 function timingSafeEqual(a: string, b: string): boolean {
   const aa = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -155,9 +213,13 @@ async function slackApi(token: string, method: string, payload: Record<string, a
 export async function enableAgentInSlack(input: {
   clientId: string;
   agentId: string;
+  botKey: string;
   iconUrl?: string | null;
 }): Promise<SlackAgentLinkRow> {
-  const installation = await getSlackInstallationByClientId(input.clientId);
+  const installation = await getSlackInstallationByClientIdAndBotKey({
+    clientId: input.clientId,
+    botKey: input.botKey,
+  });
   if (!installation) throw new Error("Slack is not connected for this client");
 
   const agent = await getAgentByIdScoped(input.clientId, input.agentId);
@@ -175,6 +237,7 @@ export async function enableAgentInSlack(input: {
     clientId: input.clientId,
     agentId: input.agentId,
     teamId: installation.team_id,
+    botKey: input.botKey,
     dmChannelId,
     displayName: agent.name,
     iconUrl: input.iconUrl ?? null,
@@ -193,7 +256,9 @@ export async function enableAgentInSlack(input: {
 
 export async function handleSlackEvent(input: { payload: any }): Promise<void> {
   const teamId: string | undefined = input.payload?.team_id;
+  const apiAppId: string | undefined = input.payload?.api_app_id;
   if (!teamId) return;
+  if (!apiAppId) return;
 
   // url_verification is handled in the route before calling this.
   const event = input.payload?.event;
@@ -202,7 +267,7 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
   // Ignore bot messages (including ourselves).
   if (event.bot_id || event.subtype === "bot_message") return;
 
-  const installation = await getSlackInstallationByTeamId(teamId);
+  const installation = await getSlackInstallationByTeamIdAndApiAppId({ teamId, apiAppId });
   if (!installation) return;
 
   if (event.type === "message" && event.channel_type === "im") {
@@ -237,6 +302,7 @@ async function handleDirectMessage(input: {
 }) {
   const link = await getSlackAgentLinkByDmChannelId({
     teamId: input.installation.team_id,
+    botKey: (input.installation as any).bot_key ?? "orchest",
     dmChannelId: input.channel,
   });
   if (!link) {
@@ -269,67 +335,29 @@ async function handleAppMention(input: {
   const cleaned = normalizeSlackText(input.text);
   if (!cleaned) return;
 
-  const { agentNameHint, taskText } = extractAgentHint(cleaned);
-  const agent = await chooseAgentForMention({
-    clientId: input.installation.client_id,
-    agentNameHint,
+  // Multi-bot model: the bot identity itself selects the agent (via slack_agent_links.bot_key).
+  const botKey = (input.installation as any).bot_key ?? "orchest";
+  const link = await getSlackAgentLinkByTeamAndBotKey({
+    teamId: input.installation.team_id,
+    botKey,
   });
-  if (!agent) {
+
+  if (!link) {
     await slackApi(input.installation.bot_access_token, "chat.postMessage", {
       channel: input.channel,
       thread_ts: input.ts,
-      text: "No agents found for this client. Create one in Orchest first.",
+      text: "This bot is installed, but no agent is linked to it yet. Enable an agent from the Orchest dashboard first.",
     });
     return;
   }
-
-  const link = await upsertSlackAgentLink({
-    clientId: input.installation.client_id,
-    agentId: agent.id,
-    teamId: input.installation.team_id,
-    displayName: agent.name,
-    iconUrl: null,
-  });
 
   await runTaskAndReply({
     installation: input.installation,
     agentLink: link,
     channel: input.channel,
     threadTs: input.ts,
-    taskText: taskText ?? cleaned,
+    taskText: cleaned,
   });
-}
-
-async function chooseAgentForMention(input: {
-  clientId: string;
-  agentNameHint: string | null;
-}) {
-  const agents = await listAgentsScoped(input.clientId);
-  if (agents.length === 0) return null;
-  if (!input.agentNameHint) return agents[0];
-
-  const hint = input.agentNameHint.toLowerCase();
-  return (
-    agents.find((a) => a.name.toLowerCase() === hint) ??
-    agents.find((a) => a.name.toLowerCase().startsWith(hint)) ??
-    agents[0]
-  );
-}
-
-function extractAgentHint(text: string): { agentNameHint: string | null; taskText: string | null } {
-  // Supports patterns:
-  // - "Ava: do X"
-  // - "Ava do X"
-  const m = text.match(/^([A-Za-z0-9_-]{2,32})\s*:\s*(.+)$/);
-  if (m) return { agentNameHint: m[1] ?? null, taskText: m[2] ?? null };
-
-  const parts = text.split(/\s+/);
-  if (parts.length >= 2 && parts[0] && parts[1]) {
-    // Heuristic: treat first token as agent name if it looks like a name.
-    return { agentNameHint: parts[0], taskText: parts.slice(1).join(" ") };
-  }
-
-  return { agentNameHint: null, taskText: null };
 }
 
 function normalizeSlackText(text: string): string {

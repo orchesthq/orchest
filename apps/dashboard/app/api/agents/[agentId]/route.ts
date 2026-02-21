@@ -6,6 +6,7 @@ import { apiFetchForClient } from "@/lib/apiForClient";
 
 const patchSchema = z.object({
   name: z.string().min(1).optional(),
+  role: z.string().min(1).optional(),
   systemPrompt: z.string().min(1).optional(),
 });
 

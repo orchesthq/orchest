@@ -44,6 +44,7 @@ export type ClientMembershipRow = {
 export type AgentRow = {
   id: string;
   client_id: string;
+  persona_key?: string | null;
   name: string;
   role: string;
   system_prompt: string;
@@ -72,6 +73,8 @@ export type SlackInstallationRow = {
   id: string;
   client_id: string;
   team_id: string;
+  bot_key?: string;
+  api_app_id?: string | null;
   team_name: string | null;
   enterprise_id: string | null;
   bot_user_id: string;
@@ -84,6 +87,7 @@ export type SlackInstallationRow = {
 export type SlackOauthStateRow = {
   state: string;
   client_id: string;
+  bot_key?: string;
   created_at: string;
   expires_at: string;
 };
@@ -93,6 +97,7 @@ export type SlackAgentLinkRow = {
   client_id: string;
   agent_id: string;
   team_id: string;
+  bot_key?: string;
   dm_channel_id: string | null;
   display_name: string;
   icon_url: string | null;
@@ -153,7 +158,7 @@ export async function getAgentByIdScoped(
 
   const { rows } = await query<AgentRow>(
     [
-      "select a.id, a.client_id, a.name, a.role, a.system_prompt, a.created_at",
+      "select a.id, a.client_id, a.persona_key, a.name, a.role, a.system_prompt, a.created_at",
       "from agents a",
       "where a.id = $2 and a.client_id = $1",
       "limit 1",
@@ -167,7 +172,7 @@ export async function listAgentsScoped(clientId: string): Promise<AgentRow[]> {
   assertUuid(clientId, "clientId");
   const { rows } = await query<AgentRow>(
     [
-      "select id, client_id, name, role, system_prompt, created_at",
+      "select id, client_id, persona_key, name, role, system_prompt, created_at",
       "from agents",
       "where client_id = $1",
       "order by created_at asc",
@@ -179,6 +184,7 @@ export async function listAgentsScoped(clientId: string): Promise<AgentRow[]> {
 
 export async function createAgent(input: {
   clientId: string;
+  personaKey?: string | null;
   name: string;
   role: string;
   systemPrompt: string;
@@ -186,11 +192,11 @@ export async function createAgent(input: {
   assertUuid(input.clientId, "clientId");
   const { rows } = await query<AgentRow>(
     [
-      "insert into agents (client_id, name, role, system_prompt)",
-      "values ($1, $2, $3, $4)",
-      "returning id, client_id, name, role, system_prompt, created_at",
+      "insert into agents (client_id, persona_key, name, role, system_prompt)",
+      "values ($1, $2, $3, $4, $5)",
+      "returning id, client_id, persona_key, name, role, system_prompt, created_at",
     ].join("\n"),
-    [input.clientId, input.name, input.role, input.systemPrompt]
+    [input.clientId, input.personaKey ?? null, input.name, input.role, input.systemPrompt]
   );
   return one(rows, "Failed to create agent");
 }
@@ -199,6 +205,7 @@ export async function updateAgentScoped(input: {
   clientId: string;
   agentId: string;
   name?: string;
+  role?: string;
   systemPrompt?: string;
 }): Promise<AgentRow> {
   assertUuid(input.clientId, "clientId");
@@ -209,11 +216,12 @@ export async function updateAgentScoped(input: {
       "update agents",
       "set",
       "  name = coalesce($3, name),",
-      "  system_prompt = coalesce($4, system_prompt)",
+      "  role = coalesce($4, role),",
+      "  system_prompt = coalesce($5, system_prompt)",
       "where client_id = $1 and id = $2",
-      "returning id, client_id, name, role, system_prompt, created_at",
+      "returning id, client_id, persona_key, name, role, system_prompt, created_at",
     ].join("\n"),
-    [input.clientId, input.agentId, input.name ?? null, input.systemPrompt ?? null]
+    [input.clientId, input.agentId, input.name ?? null, input.role ?? null, input.systemPrompt ?? null]
   );
   return one(rows, "Agent not found for client (cannot update)");
 }
@@ -281,15 +289,16 @@ export async function listClientMembershipsByUserId(userId: string): Promise<Cli
 export async function createSlackOauthState(input: {
   clientId: string;
   state: string;
+  botKey: string;
   expiresAt: Date;
 }): Promise<void> {
   assertUuid(input.clientId, "clientId");
   await query(
     [
-      "insert into slack_oauth_states (state, client_id, expires_at)",
-      "values ($1, $2, $3)",
+      "insert into slack_oauth_states (state, client_id, bot_key, expires_at)",
+      "values ($1, $2, $3, $4)",
     ].join("\n"),
-    [input.state, input.clientId, input.expiresAt.toISOString()]
+    [input.state, input.clientId, input.botKey, input.expiresAt.toISOString()]
   );
 }
 
@@ -298,7 +307,7 @@ export async function consumeSlackOauthState(state: string): Promise<SlackOauthS
     [
       "delete from slack_oauth_states",
       "where state = $1 and expires_at > now()",
-      "returning state, client_id, created_at, expires_at",
+      "returning state, client_id, bot_key, created_at, expires_at",
     ].join("\n"),
     [state]
   );
@@ -307,7 +316,9 @@ export async function consumeSlackOauthState(state: string): Promise<SlackOauthS
 
 export async function upsertSlackInstallation(input: {
   clientId: string;
+  botKey: string;
   teamId: string;
+  apiAppId?: string | null;
   teamName?: string | null;
   enterpriseId?: string | null;
   botUserId: string;
@@ -317,21 +328,24 @@ export async function upsertSlackInstallation(input: {
   assertUuid(input.clientId, "clientId");
   const { rows } = await query<SlackInstallationRow>(
     [
-      "insert into slack_installations (client_id, team_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id)",
-      "values ($1, $2, $3, $4, $5, $6, $7)",
-      "on conflict (team_id) do update set",
+      "insert into slack_installations (client_id, team_id, bot_key, api_app_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id)",
+      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+      "on conflict (team_id, bot_key) do update set",
       "  client_id = excluded.client_id,",
+      "  api_app_id = excluded.api_app_id,",
       "  team_name = excluded.team_name,",
       "  enterprise_id = excluded.enterprise_id,",
       "  bot_user_id = excluded.bot_user_id,",
       "  bot_access_token = excluded.bot_access_token,",
       "  installed_by_user_id = excluded.installed_by_user_id,",
       "  installed_at = now()",
-      "returning id, client_id, team_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
+      "returning id, client_id, team_id, bot_key, api_app_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
     ].join("\n"),
     [
       input.clientId,
       input.teamId,
+      input.botKey,
+      input.apiAppId ?? null,
       input.teamName ?? null,
       input.enterpriseId ?? null,
       input.botUserId,
@@ -342,31 +356,52 @@ export async function upsertSlackInstallation(input: {
   return one(rows, "Failed to upsert Slack installation");
 }
 
-export async function getSlackInstallationByClientId(
+export async function listSlackInstallationsByClientId(
   clientId: string
-): Promise<SlackInstallationRow | null> {
+): Promise<SlackInstallationRow[]> {
   assertUuid(clientId, "clientId");
   const { rows } = await query<SlackInstallationRow>(
     [
-      "select id, client_id, team_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
+      "select id, client_id, team_id, bot_key, api_app_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
       "from slack_installations",
       "where client_id = $1",
-      "limit 1",
+      "order by installed_at desc",
     ].join("\n"),
     [clientId]
+  );
+  return rows;
+}
+
+export async function getSlackInstallationByClientIdAndBotKey(input: {
+  clientId: string;
+  botKey: string;
+}): Promise<SlackInstallationRow | null> {
+  assertUuid(input.clientId, "clientId");
+  const { rows } = await query<SlackInstallationRow>(
+    [
+      "select id, client_id, team_id, bot_key, api_app_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
+      "from slack_installations",
+      "where client_id = $1 and bot_key = $2",
+      "order by installed_at desc",
+      "limit 1",
+    ].join("\n"),
+    [input.clientId, input.botKey]
   );
   return rows[0] ?? null;
 }
 
-export async function getSlackInstallationByTeamId(teamId: string): Promise<SlackInstallationRow | null> {
+export async function getSlackInstallationByTeamIdAndApiAppId(input: {
+  teamId: string;
+  apiAppId: string;
+}): Promise<SlackInstallationRow | null> {
   const { rows } = await query<SlackInstallationRow>(
     [
-      "select id, client_id, team_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
+      "select id, client_id, team_id, bot_key, api_app_id, team_name, enterprise_id, bot_user_id, bot_access_token, installed_by_user_id, installed_at, created_at",
       "from slack_installations",
-      "where team_id = $1",
+      "where team_id = $1 and api_app_id = $2",
       "limit 1",
     ].join("\n"),
-    [teamId]
+    [input.teamId, input.apiAppId]
   );
   return rows[0] ?? null;
 }
@@ -375,6 +410,7 @@ export async function upsertSlackAgentLink(input: {
   clientId: string;
   agentId: string;
   teamId: string;
+  botKey: string;
   dmChannelId?: string | null;
   displayName: string;
   iconUrl?: string | null;
@@ -383,18 +419,19 @@ export async function upsertSlackAgentLink(input: {
   assertUuid(input.agentId, "agentId");
   const { rows } = await query<SlackAgentLinkRow>(
     [
-      "insert into slack_agent_links (client_id, agent_id, team_id, dm_channel_id, display_name, icon_url)",
-      "values ($1, $2, $3, $4, $5, $6)",
-      "on conflict (team_id, agent_id) do update set",
+      "insert into slack_agent_links (client_id, agent_id, team_id, bot_key, dm_channel_id, display_name, icon_url)",
+      "values ($1, $2, $3, $4, $5, $6, $7)",
+      "on conflict (team_id, agent_id, bot_key) do update set",
       "  dm_channel_id = coalesce(excluded.dm_channel_id, slack_agent_links.dm_channel_id),",
       "  display_name = excluded.display_name,",
       "  icon_url = excluded.icon_url",
-      "returning id, client_id, agent_id, team_id, dm_channel_id, display_name, icon_url, created_at",
+      "returning id, client_id, agent_id, team_id, bot_key, dm_channel_id, display_name, icon_url, created_at",
     ].join("\n"),
     [
       input.clientId,
       input.agentId,
       input.teamId,
+      input.botKey,
       input.dmChannelId ?? null,
       input.displayName,
       input.iconUrl ?? null,
@@ -405,16 +442,17 @@ export async function upsertSlackAgentLink(input: {
 
 export async function getSlackAgentLinkByDmChannelId(input: {
   teamId: string;
+  botKey: string;
   dmChannelId: string;
 }): Promise<SlackAgentLinkRow | null> {
   const { rows } = await query<SlackAgentLinkRow>(
     [
-      "select id, client_id, agent_id, team_id, dm_channel_id, display_name, icon_url, created_at",
+      "select id, client_id, agent_id, team_id, bot_key, dm_channel_id, display_name, icon_url, created_at",
       "from slack_agent_links",
-      "where team_id = $1 and dm_channel_id = $2",
+      "where team_id = $1 and bot_key = $2 and dm_channel_id = $3",
       "limit 1",
     ].join("\n"),
-    [input.teamId, input.dmChannelId]
+    [input.teamId, input.botKey, input.dmChannelId]
   );
   return rows[0] ?? null;
 }
@@ -426,17 +464,64 @@ export async function getSlackAgentLinkByAgentId(input: {
   assertUuid(input.clientId, "clientId");
   assertUuid(input.agentId, "agentId");
 
-  const installation = await getSlackInstallationByClientId(input.clientId);
+  // Prefer newest installation, but if multiple bots are connected we can't infer which
+  // bot identity is used for this agent without an explicit botKey. Use the per-bot method
+  // in the Slack internal routes.
+  const installations = await listSlackInstallationsByClientId(input.clientId);
+  const installation = installations[0];
   if (!installation) return null;
 
   const { rows } = await query<SlackAgentLinkRow>(
     [
-      "select id, client_id, agent_id, team_id, dm_channel_id, display_name, icon_url, created_at",
+      "select id, client_id, agent_id, team_id, bot_key, dm_channel_id, display_name, icon_url, created_at",
       "from slack_agent_links",
       "where client_id = $1 and agent_id = $2 and team_id = $3",
       "limit 1",
     ].join("\n"),
     [input.clientId, input.agentId, installation.team_id]
+  );
+  return rows[0] ?? null;
+}
+
+export async function getSlackAgentLinkByAgentIdAndBotKey(input: {
+  clientId: string;
+  agentId: string;
+  botKey: string;
+}): Promise<SlackAgentLinkRow | null> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.agentId, "agentId");
+
+  const installation = await getSlackInstallationByClientIdAndBotKey({
+    clientId: input.clientId,
+    botKey: input.botKey,
+  });
+  if (!installation) return null;
+
+  const { rows } = await query<SlackAgentLinkRow>(
+    [
+      "select id, client_id, agent_id, team_id, bot_key, dm_channel_id, display_name, icon_url, created_at",
+      "from slack_agent_links",
+      "where client_id = $1 and agent_id = $2 and team_id = $3 and bot_key = $4",
+      "limit 1",
+    ].join("\n"),
+    [input.clientId, input.agentId, installation.team_id, input.botKey]
+  );
+  return rows[0] ?? null;
+}
+
+export async function getSlackAgentLinkByTeamAndBotKey(input: {
+  teamId: string;
+  botKey: string;
+}): Promise<SlackAgentLinkRow | null> {
+  const { rows } = await query<SlackAgentLinkRow>(
+    [
+      "select id, client_id, agent_id, team_id, bot_key, dm_channel_id, display_name, icon_url, created_at",
+      "from slack_agent_links",
+      "where team_id = $1 and bot_key = $2",
+      "order by created_at desc",
+      "limit 1",
+    ].join("\n"),
+    [input.teamId, input.botKey]
   );
   return rows[0] ?? null;
 }

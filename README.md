@@ -21,6 +21,8 @@ npm install
    - `migrations/001_init.sql`
    - `migrations/002_auth_and_membership.sql`
    - `migrations/003_slack_integration.sql`
+   - `migrations/004_slack_multi_bot_apps.sql`
+   - `migrations/005_orchest_personas.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
@@ -69,13 +71,14 @@ This starts:
 4. Deploy:
    - `fly deploy`
 
-## Slack integration (single app, many personas)
+## Slack integration (5 apps / 5 bots)
 
-This MVP uses **one Slack app per workspace** and supports **multiple agent personas** (Ava, Ben, etc.) behind the scenes.
+This MVP uses **multiple Slack apps per workspace** so users can naturally interact with bots like **@Ava** or **@Priya** (instead of `@Orchest`).
+Each bot is a separate Slack app, but they all point to the **same Orchest API endpoints**.
 
-### 1) Create a Slack App
+### 1) Create 5 Slack Apps (Ava, Ben, Priya, Sofia, Amira)
 
-- Create a Slack app in your workspace (from `api.slack.com/apps`).
+- Create one Slack app per bot in your workspace (from `api.slack.com/apps`).
 - Enable **OAuth & Permissions** and set the redirect URL:
   - `https://<your-fly-app>.fly.dev/integrations/slack/callback`
 - Add **Bot Token Scopes**:
@@ -97,16 +100,17 @@ This MVP uses **one Slack app per workspace** and supports **multiple agent pers
 ### 3) Set API env vars (Fly secrets)
 
 Set these on your Fly API app:
-- `SLACK_CLIENT_ID`
-- `SLACK_CLIENT_SECRET`
-- `SLACK_SIGNING_SECRET`
+- `SLACK_BOT_KEYS` (comma-separated: `ava,ben,priya,sofia,amira`)
+- `SLACK_<BOT>_CLIENT_ID`
+- `SLACK_<BOT>_CLIENT_SECRET`
+- `SLACK_<BOT>_SIGNING_SECRET`
 - `SLACK_REDIRECT_URI` (must match the redirect URL configured in Slack)
 - `DASHBOARD_BASE_URL` (your Vercel dashboard URL)
 
 ### 4) Connect + enable from dashboard
 
-- Go to `Dashboard → Slack integration` (`/app/integrations/slack`) and click **Connect Slack**
-- Open an Agent and click **Enable in Slack**
+- Go to `Dashboard → Slack integration` (`/app/integrations/slack`) and install each bot you want (Ava, Priya, ...)
+- Open an Agent and click **Enable in Slack** under the chosen bot identity
   - Orchest will open a DM with the installing Slack user and send the agent onboarding message.
 
 ## Design notes

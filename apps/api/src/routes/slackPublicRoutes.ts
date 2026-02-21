@@ -1,6 +1,11 @@
 import express from "express";
 import { z } from "zod";
-import { handleSlackOAuthCallback, handleSlackEvent, verifySlackSignature } from "../integrations/slack/slackService";
+import {
+  handleSlackOAuthCallback,
+  handleSlackEvent,
+  listSlackSigningSecrets,
+  verifySlackSignatureAny,
+} from "../integrations/slack/slackService";
 
 const router = express.Router();
 
@@ -24,9 +29,16 @@ router.get("/callback", async (req, res, next) => {
 export { router as slackPublicRoutes };
 
 export async function slackEventsHandler(req: express.Request, res: express.Response) {
-  const signingSecret = process.env.SLACK_SIGNING_SECRET;
-  if (!signingSecret) {
-    res.status(503).json({ error: "SLACK_SIGNING_SECRET not configured" });
+  const signingSecrets = (() => {
+    try {
+      return listSlackSigningSecrets();
+    } catch (err) {
+      console.error("[slack] signing secrets not configured", err);
+      return null;
+    }
+  })();
+  if (!signingSecrets) {
+    res.status(503).json({ error: "Slack signing secrets not configured" });
     return;
   }
 
@@ -34,8 +46,8 @@ export async function slackEventsHandler(req: express.Request, res: express.Resp
   const timestamp = req.header("x-slack-request-timestamp");
   const signature = req.header("x-slack-signature");
 
-  const ok = verifySlackSignature({
-    signingSecret,
+  const ok = verifySlackSignatureAny({
+    signingSecrets,
     timestamp,
     signature,
     rawBody,

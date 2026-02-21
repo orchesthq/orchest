@@ -2,14 +2,14 @@ import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
+import { ORCHEST_PERSONAS } from "@/lib/personas";
 
 type SlackStatus = {
-  connected: boolean;
-  installation: null | {
-    teamId: string;
-    teamName: string | null;
-    installedAt: string;
-  };
+  bots: Record<
+    string,
+    | { connected: false }
+    | { connected: true; teamId: string; teamName: string | null; installedAt: string }
+  >;
 };
 
 export default async function SlackIntegrationPage() {
@@ -51,33 +51,53 @@ export default async function SlackIntegrationPage() {
       )}
 
       {!loadError && status && (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-          <div className="flex items-start justify-between gap-6">
-            <div>
-              <div className="text-sm font-medium text-zinc-900">Workspace</div>
-              <div className="mt-1 text-sm text-zinc-600">
-                {status.connected
-                  ? `${status.installation?.teamName ?? "Slack"} (${status.installation?.teamId})`
-                  : "Not connected"}
-              </div>
-              {status.connected && status.installation?.installedAt && (
-                <div className="mt-2 text-xs text-zinc-500">
-                  Connected at {new Date(status.installation.installedAt).toLocaleString()}
-                </div>
-              )}
-            </div>
+        <div className="space-y-4">
+          {ORCHEST_PERSONAS.map((p) => {
+            const s = status?.bots?.[p.key];
+            const connected = Boolean(s && (s as any).connected);
 
-            {!status.connected ? (
-              <Link
-                href="/app/integrations/slack/connect"
-                className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            return (
+              <div
+                key={p.key}
+                className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm"
               >
-                Connect Slack
-              </Link>
-            ) : (
-              <div className="text-xs text-emerald-700">Connected</div>
-            )}
-          </div>
+                <div className="flex items-start justify-between gap-6">
+                  <div>
+                    <div className="text-base font-semibold text-zinc-900">
+                      {p.name}
+                      <span className="ml-2 text-xs font-normal text-zinc-500">
+                        ({p.key})
+                      </span>
+                    </div>
+                    <div className="mt-1 text-sm text-zinc-600">{p.description}</div>
+
+                    {connected ? (
+                      <div className="mt-2 text-xs text-zinc-500">
+                        Connected to{" "}
+                        {(s as any).teamName ?? "Slack"} ({(s as any).teamId}) at{" "}
+                        {new Date((s as any).installedAt).toLocaleString()}
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-xs text-zinc-500">Not connected</div>
+                    )}
+                  </div>
+
+                  {!connected ? (
+                    <Link
+                      href={`/app/integrations/slack/connect?bot=${encodeURIComponent(
+                        p.key
+                      )}`}
+                      className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                    >
+                      Install {p.name}
+                    </Link>
+                  ) : (
+                    <div className="text-xs text-emerald-700">Connected</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

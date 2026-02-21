@@ -6,8 +6,10 @@ export default function NewAgentPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">New agent</h1>
-          <p className="mt-1 text-sm text-zinc-600">Create a new digital employee.</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Hire a persona</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Choose one of the built-in Orchest personas. Names are fixed; role and personality are configurable.
+          </p>
         </div>
         <Link
           href="/app/agents"

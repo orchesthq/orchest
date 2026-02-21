@@ -3,10 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
+import { ORCHEST_PERSONAS } from "@/lib/personas";
+
+const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
+  ava: "ai_software_engineer",
+  ben: "ai_devops_sre",
+  priya: "ai_product_manager",
+  sofia: "ai_data_analyst",
+  amira: "ai_customer_support",
+};
 
 export function NewAgentForm() {
   const router = useRouter();
-  const [name, setName] = useState("");
+  const [personaKey, setPersonaKey] = useState<string>("ava");
   const [role, setRole] = useState("ai_software_engineer");
   const [systemPrompt, setSystemPrompt] = useState(
     getTemplateByRole("ai_software_engineer")?.defaultSystemPrompt ?? ""
@@ -26,7 +35,7 @@ export function NewAgentForm() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name,
+            personaKey,
             role,
             systemPrompt: systemPrompt.trim().length > 0 ? systemPrompt : undefined,
           }),
@@ -45,14 +54,33 @@ export function NewAgentForm() {
       }}
     >
       <div className="space-y-2">
-        <label className="text-sm font-medium text-zinc-900">Name</label>
-        <input
+        <label className="text-sm font-medium text-zinc-900">Persona</label>
+        <select
           className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Ava"
-          required
-        />
+          value={personaKey}
+          onChange={(e) => {
+            const nextPersona = e.target.value;
+            setPersonaKey(nextPersona);
+
+            const nextRole = DEFAULT_ROLE_BY_PERSONA[nextPersona] ?? "ai_software_engineer";
+            const currentTemplate = getTemplateByRole(role);
+            const isUsingTemplatePrompt =
+              currentTemplate && systemPrompt.trim() === currentTemplate.defaultSystemPrompt.trim();
+
+            setRole(nextRole);
+            if (isUsingTemplatePrompt) {
+              const nextTemplate = getTemplateByRole(nextRole);
+              if (nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
+            }
+          }}
+        >
+          {ORCHEST_PERSONAS.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.name} — {p.description}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-zinc-500">Persona names are fixed. You can change role + personality later.</p>
       </div>
 
       <div className="space-y-2">
@@ -106,7 +134,7 @@ export function NewAgentForm() {
         disabled={loading}
         className="inline-flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
       >
-        {loading ? "Creating..." : "Create agent"}
+        {loading ? "Hiring..." : "Hire persona"}
       </button>
     </form>
   );

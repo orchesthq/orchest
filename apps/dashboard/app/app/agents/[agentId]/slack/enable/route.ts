@@ -5,7 +5,7 @@ import { z } from "zod";
 import { apiFetchForClient } from "@/lib/apiForClient";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
   const session = await getServerSession(authOptions);
@@ -18,10 +18,13 @@ export async function POST(
     return NextResponse.redirect(new URL("/app/agents", process.env.NEXTAUTH_URL));
   }
 
+  const form = await req.formData().catch(() => null);
+  const botKey = z.string().min(1).parse((form?.get("bot") as string | null) ?? "ava");
+
   await apiFetchForClient(clientId, `/internal/slack/agents/${agentIdParsed.data}/enable`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ botKey }),
   });
 
   return NextResponse.redirect(

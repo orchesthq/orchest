@@ -4,9 +4,11 @@ import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { AgentEditor } from "./AgentEditor";
 import { z } from "zod";
+import { ORCHEST_PERSONAS } from "@/lib/personas";
 
 type Agent = {
   id: string;
+  persona_key?: string | null;
   name: string;
   role: string;
   system_prompt: string;
@@ -23,9 +25,18 @@ type SlackLink = {
   id: string;
   dm_channel_id: string | null;
   team_id: string;
+  bot_key?: string;
   display_name: string;
   icon_url: string | null;
   created_at: string;
+};
+
+type SlackStatus = {
+  bots: Record<
+    string,
+    | { connected: false }
+    | { connected: true; teamId: string; teamName: string | null; installedAt: string }
+  >;
 };
 
 export default async function AgentPage({
@@ -56,7 +67,7 @@ export default async function AgentPage({
 
   let agentResp: { agent: Agent } | null = null;
   let memResp: { memories: Memory[] } | null = null;
-  let slackLinkResp: { link: SlackLink | null } | null = null;
+  let slackStatus: SlackStatus | null = null;
   let loadError: string | null = null;
   try {
     agentResp = await apiFetchForClient<{ agent: Agent }>(
@@ -71,11 +82,9 @@ export default async function AgentPage({
       { method: "GET" }
     );
 
-    slackLinkResp = await apiFetchForClient<{ link: SlackLink | null }>(
-      clientId,
-      `/internal/slack/agents/${agentIdParsed.data}/link`,
-      { method: "GET" }
-    );
+    slackStatus = await apiFetchForClient<SlackStatus>(clientId, "/internal/slack/status", {
+      method: "GET",
+    });
   } catch (err) {
     loadError = err instanceof Error ? err.message : String(err);
   }
@@ -105,7 +114,10 @@ export default async function AgentPage({
   }
 
   const latestProfile = memResp?.memories?.[0]?.content ?? "";
-  const slackLink = slackLinkResp?.link ?? null;
+  const connectedBots = ORCHEST_PERSONAS.filter((p) => {
+    const s = slackStatus?.bots?.[p.key];
+    return Boolean(s && (s as any).connected);
+  });
 
   return (
     <div className="space-y-6">
@@ -131,6 +143,7 @@ export default async function AgentPage({
           initialRole={agentResp.agent.role}
           initialSystemPrompt={agentResp.agent.system_prompt}
           initialProfileMemory={latestProfile}
+          personaKey={agentResp.agent.persona_key ?? null}
         />
       </div>
 
@@ -139,24 +152,35 @@ export default async function AgentPage({
           <div>
             <h2 className="text-lg font-semibold text-zinc-900">Slack</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Enable this agent in Slack to create a DM and send an onboarding message.
+              Choose a Slack bot identity (e.g. @Ava) and enable this agent under it.
             </p>
-            {slackLink?.dm_channel_id ? (
-              <p className="mt-2 text-xs text-emerald-700">
-                Enabled (DM channel: {slackLink.dm_channel_id})
+            {connectedBots.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-700">
+                No Slack bots installed yet. Go to Integrations → Slack and install at least one bot.
               </p>
-            ) : (
-              <p className="mt-2 text-xs text-zinc-500">Not enabled yet.</p>
-            )}
+            ) : null}
           </div>
 
           <form action={`/app/agents/${agentIdParsed.data}/slack/enable`} method="post">
+            <div className="flex items-center gap-3">
+              <select
+                name="bot"
+                className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900"
+                defaultValue={connectedBots[0]?.key ?? "ava"}
+              >
+                {connectedBots.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.name} (@{p.name})
+                  </option>
+                ))}
+              </select>
             <button
               type="submit"
               className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
             >
               Enable in Slack
             </button>
+            </div>
           </form>
         </div>
       </div>
