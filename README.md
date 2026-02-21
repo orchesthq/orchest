@@ -23,6 +23,7 @@ npm install
    - `migrations/003_slack_integration.sql`
    - `migrations/004_slack_multi_bot_apps.sql`
    - `migrations/005_orchest_personas.sql`
+   - `migrations/006_backfill_persona_key_from_name.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`

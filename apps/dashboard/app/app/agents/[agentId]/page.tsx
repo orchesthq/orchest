@@ -118,6 +118,11 @@ export default async function AgentPage({
     const s = slackStatus?.bots?.[p.key];
     return Boolean(s && (s as any).connected);
   });
+  const preferredBotKey = agentResp.agent.persona_key ?? null;
+  const defaultBotKey =
+    (preferredBotKey && connectedBots.some((b) => b.key === preferredBotKey) && preferredBotKey) ||
+    connectedBots[0]?.key ||
+    "ava";
 
   return (
     <div className="space-y-6">
@@ -166,7 +171,7 @@ export default async function AgentPage({
               <select
                 name="bot"
                 className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900"
-                defaultValue={connectedBots[0]?.key ?? "ava"}
+                defaultValue={defaultBotKey}
               >
                 {connectedBots.map((p) => (
                   <option key={p.key} value={p.key}>

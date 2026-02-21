@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
 
@@ -15,10 +16,13 @@ const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
 
 export function NewAgentForm() {
   const router = useRouter();
-  const [personaKey, setPersonaKey] = useState<string>("ava");
-  const [role, setRole] = useState("ai_software_engineer");
+  const search = useSearchParams();
+  const initialPersona = search.get("persona") ?? "ava";
+  const [personaKey, setPersonaKey] = useState<string>(initialPersona);
+  const initialRole = DEFAULT_ROLE_BY_PERSONA[initialPersona] ?? "ai_software_engineer";
+  const [role, setRole] = useState(initialRole);
   const [systemPrompt, setSystemPrompt] = useState(
-    getTemplateByRole("ai_software_engineer")?.defaultSystemPrompt ?? ""
+    getTemplateByRole(initialRole)?.defaultSystemPrompt ?? ""
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
