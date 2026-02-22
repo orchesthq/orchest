@@ -28,6 +28,7 @@ npm install
    - `migrations/008_github_integration.sql`
    - `migrations/009_github_agent_default_repo.sql`
    - `migrations/010_partner_settings.sql`
+   - `migrations/011_github_agent_multi_repo.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
@@ -92,6 +93,9 @@ Each bot is a separate Slack app, but they all point to the **same Orchest API e
   - `im:write`
   - `app_mentions:read`
   - `channels:read`, `groups:read`, `im:read`, `mpim:read`
+  - `channels:history`, `groups:history`, `im:history`, `mpim:history`
+  - `files:read`
+  - `canvases:write`
 
 ### 2) Configure Event Subscriptions
 
@@ -199,7 +203,7 @@ on conflict (partner, key) do update set settings = excluded.settings, updated_a
 
 ### 3) Connect from dashboard
 
-- Open an Agent → **GitHub** section → **Connect GitHub** (if not yet connected)
+- Open an Agent → **GitHub** section → **Go to GitHub integration** (if not yet connected)
 - Install the app on your org/repos
 - **Link to GitHub** – set commit author name/email for this agent
 
@@ -218,7 +222,8 @@ See [ROADMAP.md](./ROADMAP.md) for plans around:
 - **Dashboard auth**: NextAuth Credentials backed by `users` + `client_memberships`.
 - **Dashboard → API**: the dashboard calls the API with `x-internal-secret` + `x-client-id`.
 - **LLM integration**: uses an OpenAI-compatible endpoint. If OpenAI settings are not configured in `partner_settings`, planning + summarization return mocked deterministic output so the system remains runnable.
-- **GitHub tools**: scaffolded tool definitions only (logs intended actions; no real API calls yet).
+- **GitHub tools**: real GitHub App tools with safety guardrails (chunked reads + patch-based edits + pre-PR diff gate).
+- **Agent engine**: selectable via `ORCHEST_AGENT_ENGINE` (see `apps/api/.env.example`).
 
 ### OpenAI settings (optional)
 

@@ -34,17 +34,15 @@
 
 **Goal:** Agents can take real actions: update code, create/update Jira issues, edit Confluence pages.
 
-**Design:** See [docs/GITHUB_INTEGRATION_DESIGN.md](../docs/GITHUB_INTEGRATION_DESIGN.md) for the full GitHub integration design: dashboard connect flow, access levels (read-only / PR-only / direct push), repo selection, and implementation phases.
+**Design:** See [docs/GITHUB_INTEGRATION_DESIGN.md](./docs/GITHUB_INTEGRATION_DESIGN.md) for the full GitHub integration design: dashboard connect flow, access levels (read-only / PR-only / direct push), repo selection, and implementation phases.
 
 ### Dogfooding: Orchest with Orchest
 
 Develop Orchest using its own AI agents:
 
 1. **GitHub**
-   - You already have `githubTools.ts` scaffold (create_branch, commit_changes, open_pull_request)
-   - Wire real GitHub API: use `GITHUB_TOKEN` (or per-client OAuth) for auth
-   - Planning service: when a plan step says “create PR” or “commit changes”, call real tools instead of `simulateStep`
-   - Start by enabling one repo (Orchest) for your own client
+   - GitHub App install + per-agent connections are implemented (including multi-repo linking and guardrails against “crappy PRs”).
+   - Next: add more end-to-end tests around the GitHub flows and tighten the PR “review gate” UX (show changed files summary before opening PR).
 
 2. **Jira**
    - New integration: `integrations/jira/` – create issue, update status, add comment
@@ -64,7 +62,15 @@ Develop Orchest using its own AI agents:
 
 ### Suggested order
 
-1. Finish GitHub tools (real API calls, not mocks)
-2. Use Orchest repo as the first “dogfood” target
+1. Harden/expand GitHub tools (more guardrails + tests)
+2. Use Orchest repo as the first “dogfood” target (end-to-end)
 3. Add Jira – create issues for tasks, link PRs
 4. Add Confluence – document designs and decisions
+
+---
+
+## Agent UX (quality + autonomy)
+
+- **Clarify-first behavior**: only ask questions when input is ambiguous or a clear choice is required; otherwise proceed.
+- **Document outputs**: prefer publishing long-form outputs to Slack Canvas (or other docs backends later), with a short conversational Slack message + link.
+- **Browsing**: add an explicit “web fetch/search” tool if agents need to reference external sites reliably (don’t rely on the model “just browsing”).
