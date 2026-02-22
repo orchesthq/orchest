@@ -503,9 +503,7 @@ export default async function AgentPage({
               Remove this agent. Tasks and memories will be deleted. You can hire again later.
             </p>
           </div>
-          <form action={`/app/agents/${agentIdParsed.data}/disable`} method="post">
-            <DisableButton />
-          </form>
+          <DisableButton agentId={agentIdParsed.data} />
         </div>
       </div>
     </div>
