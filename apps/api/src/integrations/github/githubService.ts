@@ -62,6 +62,12 @@ function normalizePrivateKey(raw: string): string {
     s = s.slice(1, -1);
   }
 
+  // Sometimes people accidentally paste SQL dollar-quoting markers into the value.
+  // (Those should be used for SQL string quoting, not included in the stored JSON.)
+  if (s.startsWith("$$") && s.endsWith("$$") && s.length >= 4) {
+    s = s.slice(2, -2);
+  }
+
   // Normalize Windows newlines and common escape patterns.
   // - actual newlines: \r\n -> \n
   // - escaped: "\\n" or "\n" or "\\r\\n"
@@ -71,6 +77,23 @@ function normalizePrivateKey(raw: string): string {
     .replace(/\\\\n/g, "\n")
     .replace(/\\n/g, "\n")
     .trim();
+
+  // Normalize BEGIN/END lines that have too many dashes (e.g. "----------BEGIN ...-----").
+  // Only touch the first/last line to avoid mangling base64 content.
+  const lines = s.split("\n").map((l) => l.trimEnd());
+  if (lines.length >= 2) {
+    const first = lines[0]?.trim();
+    const last = lines[lines.length - 1]?.trim();
+    if (first) {
+      const m = first.match(/^-+BEGIN\s+([A-Z0-9 ]+?)\s*-+$/i);
+      if (m?.[1]) lines[0] = `-----BEGIN ${m[1].trim()}-----`;
+    }
+    if (last) {
+      const m = last.match(/^-+END\s+([A-Z0-9 ]+?)\s*-+$/i);
+      if (m?.[1]) lines[lines.length - 1] = `-----END ${m[1].trim()}-----`;
+    }
+    s = lines.join("\n").trim();
+  }
 
   // If someone stored the PEM as a single line, re-wrap the base64 body.
   const m = s.match(
