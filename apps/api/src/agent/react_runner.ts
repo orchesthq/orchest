@@ -16,6 +16,41 @@ type ReActOptions = {
 
 type ExecutedStep = { step: string; result: string };
 
+function synthesizeStatusFromToolCalls(calls: Array<{ name: string; arguments: Record<string, unknown> }>): string {
+  const c = calls[0];
+  if (!c) return "";
+  const name = c.name;
+  const args = c.arguments ?? {};
+  if (name === "github_list_tree") return "Scanning the repo structure…";
+  if (name === "github_search_code") {
+    const q = typeof args.query === "string" ? args.query : "";
+    return q ? `Searching the repo for “${q}”…` : "Searching the repo…";
+  }
+  if (name === "github_read_file") {
+    const p = typeof args.path === "string" ? args.path : "";
+    return p ? `Reading \`${p}\`…` : "Reading a file…";
+  }
+  if (name === "create_branch") return "Creating a branch…";
+  if (name === "create_file_and_commit") {
+    const p = typeof args.path === "string" ? args.path : "";
+    return p ? `Writing \`${p}\` and committing…` : "Writing a file and committing…";
+  }
+  if (name === "open_pull_request") return "Opening a pull request…";
+  if (name === "noop") return "Working on it…";
+  return "Working on it…";
+}
+
+function synthesizeNonToolStatus(i: number): string {
+  // Used when the model returns no tool calls and no usable status text.
+  // Keep it short and human; avoid implying external actions.
+  const options = [
+    "Pulling this together…",
+    "Drafting a clear response…",
+    "Reviewing what we have so far…",
+  ];
+  return options[i % options.length]!;
+}
+
 function redactArgs(args: unknown): unknown {
   if (!args || typeof args !== "object") return args;
   const obj: any = Array.isArray(args) ? [] : {};
@@ -121,10 +156,15 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
 
     const statusText =
       typeof (resp.assistantMessage as any)?.content === "string" ? String((resp.assistantMessage as any).content).trim() : "";
-    if (statusText && input.onProgress) {
-      const oneLine = statusText.replace(/\s+/g, " ").trim();
-      const clipped = oneLine.length > 140 ? oneLine.slice(0, 140) + "…" : oneLine;
-      await input.onProgress({ type: "status", text: clipped }).catch(() => {});
+    if (input.onProgress) {
+      const base =
+        statusText ||
+        (resp.toolCalls.length > 0 ? synthesizeStatusFromToolCalls(resp.toolCalls) : synthesizeNonToolStatus(i));
+      if (base) {
+        const oneLine = base.replace(/\s+/g, " ").trim();
+        const clipped = oneLine.length > 140 ? oneLine.slice(0, 140) + "…" : oneLine;
+        await input.onProgress({ type: "status", text: clipped }).catch(() => {});
+      }
     }
 
     const ctx = { taskId: input.taskId, clientId: input.clientId, agentId: input.agentId };

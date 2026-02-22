@@ -480,6 +480,28 @@ function normalizeSlackText(text: string): string {
     .trim();
 }
 
+function slackMrkdwnFromMarkdown(text: string): string {
+  let s = String(text ?? "");
+  // Headings: "## Title" -> "*Title*"
+  s = s
+    .split("\n")
+    .map((line) => {
+      const m = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+      if (!m) return line;
+      const title = (m[2] ?? "").trim();
+      return title ? `*${title}*` : line;
+    })
+    .join("\n");
+
+  // Bold: **text** -> *text*
+  s = s.replace(/\*\*(.+?)\*\*/g, "*$1*");
+
+  // Horizontal rules / separators.
+  s = s.replace(/^\s*---\s*$/gm, "────────");
+
+  return s.trim();
+}
+
 async function postSlackTextChunked(input: {
   token: string;
   channel: string;
@@ -489,7 +511,7 @@ async function postSlackTextChunked(input: {
   iconUrl?: string;
 }) {
   const maxLen = 3500;
-  const raw = String(input.text ?? "");
+  const raw = slackMrkdwnFromMarkdown(String(input.text ?? ""));
   const chunks: string[] = [];
   let remaining = raw;
   while (remaining.length > maxLen) {
@@ -536,6 +558,28 @@ async function runTaskAndReply(input: {
     taskInput: input.taskText,
   });
 
+  let postedProgressHeader = false;
+  const postProgress = async (text: string) => {
+    if (!text) return;
+    if (!postedProgressHeader) {
+      postedProgressHeader = true;
+      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+        channel: input.channel,
+        thread_ts: input.threadTs,
+        text: "I’ll share quick progress notes in this thread as I work.",
+        username: input.agentLink.display_name,
+        icon_url: input.agentLink.icon_url ?? undefined,
+      });
+    }
+    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+      channel: input.channel,
+      thread_ts: input.threadTs,
+      text,
+      username: input.agentLink.display_name,
+      icon_url: input.agentLink.icon_url ?? undefined,
+    });
+  };
+
   const formatPlanForUser = async (plan: { steps: string[]; notes?: string }): Promise<string> => {
     const ack = await generateSlackPlanAck({
       agentName: agent.name,
@@ -566,13 +610,7 @@ async function runTaskAndReply(input: {
     },
     onProgress: async (u) => {
       if (!u.text) return;
-      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-        channel: input.channel,
-        thread_ts: input.threadTs,
-        text: u.text,
-        username: input.agentLink.display_name,
-        icon_url: input.agentLink.icon_url ?? undefined,
-      });
+      await postProgress(u.text);
     },
   })
     .then(async (result) => {

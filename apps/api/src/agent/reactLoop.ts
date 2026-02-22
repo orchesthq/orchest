@@ -29,10 +29,10 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       limit: 50,
     });
 
-    // ReAct loop will optionally emit its own intermediate updates (future).
-    // For now, keep compatibility with Slack by emitting a minimal plan.
+    // Let the Slack layer generate a natural in-character acknowledgement.
+    // We intentionally avoid templated “review context / use tools / summarize” phrasing here.
     if (options?.onPlanReady) {
-      await options.onPlanReady({ steps: ["Review context", "Use tools to complete the task", "Summarize results"] });
+      await options.onPlanReady({ steps: [] });
     }
 
     const { final, executed } = await runReActLoop({

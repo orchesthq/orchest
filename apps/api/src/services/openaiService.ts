@@ -365,6 +365,7 @@ export async function generateSlackPlanAck(input: {
     `You are ${input.agentName} (${input.agentRole}) replying in Slack.`,
     "Write a natural, human acknowledgement that you’re starting the task.",
     "Use the agent’s profile memories to shape voice and phrasing. Do not be robotic.",
+    "Do not mention internal tooling. Speak like a colleague (e.g. 'I’ll take a look at the repo' not 'I will use tools').",
     "Keep it short: 1–2 sentences, then (if steps are provided) a numbered plan list.",
     "No JSON, no code fences.",
   ].join("\n");
