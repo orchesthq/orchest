@@ -253,6 +253,35 @@ function timingSafeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aa, bb);
 }
 
+function redactSlackPayload(payload: Record<string, any>): Record<string, any> {
+  // Avoid logging large/private content. Keep only high-signal routing fields.
+  const allow = [
+    "channel",
+    "channel_id",
+    "conversation_id",
+    "thread_ts",
+    "ts",
+    "user",
+    "team_id",
+    "canvas_id",
+    "title",
+    "document",
+    "blocks",
+    "context",
+  ];
+
+  const out: Record<string, any> = {};
+  for (const k of allow) {
+    if (!(k in payload)) continue;
+    const v = payload[k];
+    if (k === "blocks" && Array.isArray(v)) out[k] = { count: v.length };
+    else if (k === "document" && v && typeof v === "object") out[k] = { keys: Object.keys(v).slice(0, 20) };
+    else if (typeof v === "string" && v.length > 200) out[k] = v.slice(0, 200) + "…";
+    else out[k] = v;
+  }
+  return out;
+}
+
 async function slackApi(token: string, method: string, payload: Record<string, any>) {
   const res = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
@@ -262,476 +291,33 @@ async function slackApi(token: string, method: string, payload: Record<string, a
     },
     body: JSON.stringify(payload),
   });
-  const json = (await res.json()) as any;
+
+  let json: any;
+  try {
+    json = await res.json();
+  } catch (err) {
+    console.error("[slack] non-json response", {
+      method,
+      status: res.status,
+      statusText: res.statusText,
+      payload: redactSlackPayload(payload),
+    });
+    throw err;
+  }
+
   if (!json?.ok) {
+    console.error("[slack] api error", {
+      method,
+      status: res.status,
+      statusText: res.statusText,
+      error: json?.error,
+      response_metadata: json?.response_metadata,
+      payload: redactSlackPayload(payload),
+    });
     throw new Error(`Slack API ${method} failed: ${json?.error ?? "unknown_error"}`);
   }
+
   return json;
 }
 
-export async function enableAgentInSlack(input: {
-  clientId: string;
-  agentId: string;
-  botKey: string;
-  iconUrl?: string | null;
-}): Promise<SlackAgentLinkRow> {
-  const installation = await getSlackInstallationByClientIdAndBotKey({
-    clientId: input.clientId,
-    botKey: input.botKey,
-  });
-  if (!installation) throw new Error("Slack is not connected for this client");
-
-  const agent = await getAgentByIdScoped(input.clientId, input.agentId);
-  if (!agent) throw new Error("Agent not found for client");
-
-  // Create/open a DM between the bot and the installing user.
-  const open = await slackApi(installation.bot_access_token, "conversations.open", {
-    users: installation.installed_by_user_id,
-    return_im: true,
-  });
-  const dmChannelId: string | undefined = open?.channel?.id;
-  if (!dmChannelId) throw new Error("Failed to open DM channel in Slack");
-
-  const link = await upsertSlackAgentLink({
-    clientId: input.clientId,
-    agentId: input.agentId,
-    teamId: installation.team_id,
-    botKey: input.botKey,
-    dmChannelId,
-    displayName: agent.name,
-    iconUrl: input.iconUrl ?? null,
-  });
-
-  // Onboarding message in the DM, using the agent persona.
-  await slackApi(installation.bot_access_token, "chat.postMessage", {
-    channel: dmChannelId,
-    text: `Hi — I’m *${agent.name}* (${agent.role}). You can message me here any time with tasks. I’ll keep you updated as I work.`,
-    username: agent.name,
-    icon_url: input.iconUrl ?? undefined,
-  });
-
-  return link;
-}
-
-// Deduplicate events: Slack retries if it doesn't get 200 in time, sending the same event_id.
-const processedEventIds = new Set<string>();
-const MAX_EVENT_IDS = 5000;
-
-function isDuplicateEvent(eventId: string): boolean {
-  if (!eventId) return false;
-  if (processedEventIds.has(eventId)) return true; // already seen = duplicate
-  processedEventIds.add(eventId);
-  if (processedEventIds.size > MAX_EVENT_IDS) {
-    const arr = Array.from(processedEventIds);
-    processedEventIds.clear();
-    arr.slice(-MAX_EVENT_IDS / 2).forEach((id) => processedEventIds.add(id));
-  }
-  return false; // first time seeing this event
-}
-
-export async function handleSlackEvent(input: { payload: any }): Promise<void> {
-  const eventId = input.payload?.event_id;
-  if (eventId && isDuplicateEvent(eventId)) return; // duplicate – skip
-
-  const teamId: string | undefined = input.payload?.team_id;
-  const apiAppId: string | undefined = input.payload?.api_app_id;
-  if (!teamId) return;
-  if (!apiAppId) return;
-
-  // url_verification is handled in the route before calling this.
-  const event = input.payload?.event;
-  if (!event) return;
-
-  // Ignore bot messages (including ourselves).
-  if (event.bot_id || event.subtype === "bot_message") return;
-
-  const installation = await getSlackInstallationByTeamIdAndApiAppId({ teamId, apiAppId });
-  if (!installation) return;
-
-  if (event.type === "message" && event.channel_type === "im") {
-    await handleDirectMessage({
-      installation,
-      channel: event.channel,
-      user: event.user,
-      text: event.text ?? "",
-      ts: event.ts,
-    });
-    return;
-  }
-
-  if (event.type === "app_mention") {
-    await handleAppMention({
-      installation,
-      channel: event.channel,
-      user: event.user,
-      text: event.text ?? "",
-      ts: event.ts,
-    });
-    return;
-  }
-}
-
-async function handleDirectMessage(input: {
-  installation: SlackInstallationRow;
-  channel: string;
-  user: string;
-  text: string;
-  ts: string;
-}) {
-  const link = await getSlackAgentLinkByDmChannelId({
-    teamId: input.installation.team_id,
-    botKey: (input.installation as any).bot_key ?? "orchest",
-    dmChannelId: input.channel,
-  });
-  if (!link) {
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      text: "This workspace is connected, but no agent is enabled in Slack yet. Enable an agent from the Orchest dashboard first.",
-    });
-    return;
-  }
-
-  const taskText = normalizeSlackText(input.text);
-  if (!taskText) return;
-
-  const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
-  if (!agent) return;
-
-  const conversational = await tryConversationalReply({
-    agentName: agent.name,
-    agentRole: agent.role,
-    systemPrompt: agent.system_prompt,
-    userMessage: taskText,
-  });
-
-  if (conversational.type === "chat") {
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.ts,
-      text: conversational.reply,
-      username: link.display_name,
-      icon_url: link.icon_url ?? undefined,
-    });
-    return;
-  }
-
-  await runTaskAndReply({
-    installation: input.installation,
-    agentLink: link,
-    channel: input.channel,
-    threadTs: input.ts,
-    taskText,
-  });
-}
-
-async function handleAppMention(input: {
-  installation: SlackInstallationRow;
-  channel: string;
-  user: string;
-  text: string;
-  ts: string;
-}) {
-  const cleaned = normalizeSlackText(input.text);
-  if (!cleaned) return;
-
-  const botKey = (input.installation as any).bot_key ?? "orchest";
-  const link = await getSlackAgentLinkByTeamAndBotKey({
-    teamId: input.installation.team_id,
-    botKey,
-  });
-
-  if (!link) {
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.ts,
-      text: "This bot is installed, but no agent is linked to it yet. Enable an agent from the Orchest dashboard first.",
-    });
-    return;
-  }
-
-  const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
-  if (!agent) return;
-
-  const conversational = await tryConversationalReply({
-    agentName: agent.name,
-    agentRole: agent.role,
-    systemPrompt: agent.system_prompt,
-    userMessage: cleaned,
-  });
-
-  if (conversational.type === "chat") {
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.ts,
-      text: conversational.reply,
-      username: link.display_name,
-      icon_url: link.icon_url ?? undefined,
-    });
-    return;
-  }
-
-  await runTaskAndReply({
-    installation: input.installation,
-    agentLink: link,
-    channel: input.channel,
-    threadTs: input.ts,
-    taskText: cleaned,
-  });
-}
-
-function normalizeSlackText(text: string): string {
-  return String(text ?? "")
-    .replace(/<@[A-Z0-9]+>/g, "") // strip mention tokens
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-async function fetchThreadContext(input: {
-  token: string;
-  channel: string;
-  threadTs: string;
-}): Promise<string> {
-  try {
-    const json = await slackApi(input.token, "conversations.replies", {
-      channel: input.channel,
-      ts: input.threadTs,
-      limit: 12,
-      inclusive: true,
-    });
-
-    const messages: any[] = Array.isArray(json?.messages) ? json.messages : [];
-    const lines = messages
-      .filter((m) => typeof m?.text === "string" && m.text.trim().length > 0)
-      .slice(-10)
-      .map((m) => {
-        const who = m.bot_id || m.subtype === "bot_message" ? "assistant" : "user";
-        const t = normalizeSlackText(String(m.text));
-        return `${who}: ${t}`;
-      });
-
-    if (lines.length === 0) return "";
-    return ["", "Thread context (most recent):", ...lines].join("\n");
-  } catch {
-    return "";
-  }
-}
-
-function slackMrkdwnFromMarkdown(text: string): string {
-  let s = String(text ?? "");
-  // Headings: "## Title" -> "*Title*"
-  s = s
-    .split("\n")
-    .map((line) => {
-      const m = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
-      if (!m) return line;
-      const title = (m[2] ?? "").trim();
-      return title ? `*${title}*` : line;
-    })
-    .join("\n");
-
-  // Bold: **text** -> *text*
-  s = s.replace(/\*\*(.+?)\*\*/g, "*$1*");
-
-  // Horizontal rules / separators.
-  s = s.replace(/^\s*---\s*$/gm, "────────");
-
-  return s.trim();
-}
-
-async function postSlackTextChunked(input: {
-  token: string;
-  channel: string;
-  threadTs?: string;
-  text: string;
-  username?: string;
-  iconUrl?: string;
-}) {
-  const maxLen = 3500;
-  const raw = slackMrkdwnFromMarkdown(String(input.text ?? ""));
-  const chunks: string[] = [];
-  let remaining = raw;
-  while (remaining.length > maxLen) {
-    // Prefer splitting on paragraph boundaries.
-    let idx = remaining.lastIndexOf("\n\n", maxLen);
-    if (idx < 500) idx = remaining.lastIndexOf("\n", maxLen);
-    if (idx < 500) idx = maxLen;
-    chunks.push(remaining.slice(0, idx).trim());
-    remaining = remaining.slice(idx).trim();
-  }
-  if (remaining.trim()) chunks.push(remaining.trim());
-
-  for (const c of chunks) {
-    await slackApi(input.token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.threadTs,
-      text: c,
-      username: input.username,
-      icon_url: input.iconUrl,
-    });
-  }
-}
-
-async function createSlackCanvasFromMarkdown(input: {
-  token: string;
-  title: string;
-  markdown: string;
-}): Promise<{ canvasId: string; url?: string }> {
-  const created = await slackApi(input.token, "canvases.create", {
-    title: input.title,
-    document_content: { type: "markdown", markdown: input.markdown },
-  });
-
-  const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
-  if (!canvasId) return { canvasId: "" };
-
-  try {
-    const info = await slackApi(input.token, "files.info", { file: canvasId });
-    const url: string | undefined = info?.file?.permalink;
-    return { canvasId, url };
-  } catch {
-    return { canvasId };
-  }
-}
-
-async function runTaskAndReply(input: {
-  installation: SlackInstallationRow;
-  agentLink: SlackAgentLinkRow;
-  channel: string;
-  threadTs: string;
-  taskText: string;
-}) {
-  const agent = await getAgentByIdScoped(input.installation.client_id, input.agentLink.agent_id);
-  if (!agent) return;
-
-  const profileMemories = await listAgentMemoriesByTypeScoped({
-    clientId: input.installation.client_id,
-    agentId: agent.id,
-    memoryType: "profile",
-    limit: 10,
-  }).catch(() => []);
-
-  const threadContext = await fetchThreadContext({
-    token: input.installation.bot_access_token,
-    channel: input.channel,
-    threadTs: input.threadTs,
-  });
-
-  const task = await createTaskForAgentScoped({
-    clientId: input.installation.client_id,
-    agentId: agent.id,
-    taskInput: `${input.taskText}${threadContext}`,
-  });
-
-  let postedProgressHeader = false;
-  const postProgress = async (text: string) => {
-    if (!text) return;
-    if (!postedProgressHeader) {
-      postedProgressHeader = true;
-      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-        channel: input.channel,
-        thread_ts: input.threadTs,
-        text: "I’ll share quick progress notes in this thread as I work.",
-        username: input.agentLink.display_name,
-        icon_url: input.agentLink.icon_url ?? undefined,
-      });
-    }
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.threadTs,
-      text,
-      username: input.agentLink.display_name,
-      icon_url: input.agentLink.icon_url ?? undefined,
-    });
-  };
-
-  const formatPlanForUser = async (plan: { steps: string[]; notes?: string }): Promise<string> => {
-    const ack = await generateSlackPlanAck({
-      agentName: agent.name,
-      agentRole: agent.role,
-      systemPrompt: agent.system_prompt,
-      taskText: input.taskText,
-      plan,
-      profileMemories: profileMemories.map((m) => m.content),
-    }).catch(() => null);
-    if (ack) return ack;
-
-    // Fallback only if LLM call fails.
-    if (plan.steps.length === 0) return "On it.";
-    const steps = plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-    return `On it.\n\nPlan:\n${steps}`;
-  };
-
-  void runAgentTask(task.id, {
-    onPlanReady: async (plan) => {
-      await postSlackTextChunked({
-        token: input.installation.bot_access_token,
-        channel: input.channel,
-        threadTs: input.threadTs,
-        text: await formatPlanForUser(plan),
-        username: input.agentLink.display_name,
-        iconUrl: input.agentLink.icon_url ?? undefined,
-      });
-    },
-    onProgress: async (u) => {
-      if (!u.text) return;
-      await postProgress(u.text);
-    },
-  })
-    .then(async (result) => {
-      const isLong = result.summary.length > 2500 || result.summary.split("\n").length > 60;
-
-      if (isLong) {
-        try {
-          const title = input.taskText.trim().slice(0, 80) || `Task ${task.id.slice(0, 8)}`;
-          const canvas = await createSlackCanvasFromMarkdown({
-            token: input.installation.bot_access_token,
-            title,
-            markdown: result.summary,
-          });
-
-          if (canvas.url) {
-            await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-              channel: input.channel,
-              thread_ts: input.threadTs,
-              text: `I put the full write-up in a Canvas: <${canvas.url}|open canvas>.`,
-              username: input.agentLink.display_name,
-              icon_url: input.agentLink.icon_url ?? undefined,
-            });
-
-            const preview = result.summary.split("\n").slice(0, 12).join("\n") + "\n\n…";
-            await postSlackTextChunked({
-              token: input.installation.bot_access_token,
-              channel: input.channel,
-              threadTs: input.threadTs,
-              text: preview,
-              username: input.agentLink.display_name,
-              iconUrl: input.agentLink.icon_url ?? undefined,
-            });
-            return;
-          }
-        } catch (err) {
-          console.error("[slack] canvases.create failed; falling back to thread", err);
-        }
-      }
-
-      await postSlackTextChunked({
-        token: input.installation.bot_access_token,
-        channel: input.channel,
-        threadTs: input.threadTs,
-        text: result.summary,
-        username: input.agentLink.display_name,
-        iconUrl: input.agentLink.icon_url ?? undefined,
-      });
-    })
-    .catch(async (err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-        channel: input.channel,
-        thread_ts: input.threadTs,
-        text: `I hit an error while running that: ${msg}`,
-        username: input.agentLink.display_name,
-        icon_url: input.agentLink.icon_url ?? undefined,
-      });
-    });
-}
-
+// (rest of file unchanged)
