@@ -685,8 +685,24 @@ async function createSlackCanvasFromMarkdown(input: {
       const info = await slackApi(input.token, "files.info", { file: canvasId });
       const url: string | undefined = info?.file?.permalink;
       return { canvasId, url };
-    } catch {
+    } catch (err) {
+      console.error("[slack] files.info failed for canvas", err);
       return { canvasId };
+    }
+  };
+
+  const tryBuildCanvasUrl = async (canvasId: string): Promise<string | undefined> => {
+    // Fallback: construct a docs URL using the workspace URL from auth.test.
+    // Slack canvas examples use: https://<workspace>.slack.com/docs/<TEAM_ID>/<CANVAS_ID>
+    try {
+      const auth = await slackApi(input.token, "auth.test", {});
+      const baseUrl: string | undefined = auth?.url;
+      const teamId: string | undefined = auth?.team_id;
+      if (!baseUrl || !teamId) return undefined;
+      return `${String(baseUrl).replace(/\/+$/, "")}/docs/${teamId}/${canvasId}`;
+    } catch (err) {
+      console.error("[slack] auth.test failed while building canvas url", err);
+      return undefined;
     }
   };
 
@@ -738,7 +754,10 @@ async function createSlackCanvasFromMarkdown(input: {
 
   const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
   if (!canvasId) return { canvasId: "" };
-  return await tryFilesInfo(canvasId);
+  const info = await tryFilesInfo(canvasId);
+  if (info.url) return info;
+  const fallback = await tryBuildCanvasUrl(canvasId);
+  return { canvasId, url: fallback };
 }
 
 async function runTaskAndReply(input: {
@@ -882,7 +901,18 @@ async function runTaskAndReply(input: {
           }
 
           if (canvas.canvasId && !canvas.url) {
-            console.warn("[slack] canvas created but no url (files.info failed?)", { canvasId: canvas.canvasId });
+            console.warn("[slack] canvas created but no url (files.info + fallback failed)", {
+              canvasId: canvas.canvasId,
+            });
+            await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+              channel: input.channel,
+              thread_ts: input.threadTs,
+              text:
+                "I created a Canvas, but Slack didn’t give me a permalink to share. " +
+                `Canvas id: ${canvas.canvasId}. This often means the token is missing \`files:read\` scope or your workspace plan restricts Canvas APIs.`,
+              username: input.agentLink.display_name,
+              icon_url: input.agentLink.icon_url ?? undefined,
+            });
           }
         } catch (err) {
           console.error("[slack] canvases.create failed; falling back to thread", err);
