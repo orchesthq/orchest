@@ -7,9 +7,8 @@ import {
   linkAgentToGitHub,
   handleGitHubInstallationCallback,
   listInstallationRepos,
-  checkGitHubAppAuth,
 } from "../integrations/github/githubService";
-import { deleteGitHubInstallationByClientId } from "../db/schema";
+import { deleteGitHubAgentConnectionScoped, deleteGitHubInstallationByClientId } from "../db/schema";
 
 const router = express.Router();
 
@@ -48,15 +47,6 @@ router.get("/status", async (req, res, next) => {
     const clientId = req.clientId!;
     const status = await getGitHubStatus(clientId);
     res.status(200).json(status);
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.get("/app-check", async (_req, res, next) => {
-  try {
-    const result = await checkGitHubAppAuth();
-    res.status(200).json(result);
   } catch (err) {
     next(err);
   }
@@ -123,6 +113,17 @@ router.post("/agents/:agentId/link", async (req, res, next) => {
     });
 
     res.status(200).json({ connection });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/agents/:agentId/unlink", async (req, res, next) => {
+  try {
+    const clientId = req.clientId!;
+    const agentId = z.string().uuid().parse(req.params.agentId);
+    const deleted = await deleteGitHubAgentConnectionScoped({ clientId, agentId });
+    res.status(200).json({ ok: true, deleted });
   } catch (err) {
     next(err);
   }

@@ -956,6 +956,27 @@ export async function getGitHubAgentConnectionByAgentId(
   return rows[0] ?? null;
 }
 
+export async function deleteGitHubAgentConnectionScoped(input: {
+  clientId: string;
+  agentId: string;
+}): Promise<boolean> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.agentId, "agentId");
+
+  const { rows } = await query<{ id: string }>(
+    [
+      "delete from github_agent_connections gac",
+      "using agents a",
+      "where a.id = gac.agent_id",
+      "  and a.client_id = $1",
+      "  and a.id = $2",
+      "returning gac.id",
+    ].join("\n"),
+    [input.clientId, input.agentId]
+  );
+  return rows.length > 0;
+}
+
 export async function createGitHubAgentConnection(input: {
   agentId: string;
   githubInstallationId: string;

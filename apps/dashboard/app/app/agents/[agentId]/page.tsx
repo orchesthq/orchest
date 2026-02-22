@@ -275,8 +275,8 @@ export default async function AgentPage({
                   {githubConnection.commit_author_name} &lt;{githubConnection.commit_author_email}&gt;
                 </code>
               </div>
-              <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
-                <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
                   <div>
                     <label htmlFor="defaultRepo" className="block text-xs font-medium text-zinc-500">
                       Repository
@@ -339,8 +339,16 @@ export default async function AgentPage({
                   >
                     Update
                   </button>
-                </div>
-              </form>
+                </form>
+                <form action={`/app/agents/${agentIdParsed.data}/github/unlink`} method="post">
+                  <button
+                    type="submit"
+                    className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Remove link
+                  </button>
+                </form>
+              </div>
             </div>
           ) : githubRepos.length === 0 ? (
             <p className="text-xs text-amber-700">

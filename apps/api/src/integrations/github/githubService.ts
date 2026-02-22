@@ -358,35 +358,3 @@ export async function getValidInstallationToken(installationId: number): Promise
   const { token } = await getInstallationAccessToken(installationId);
   return token;
 }
-
-export async function checkGitHubAppAuth(): Promise<
-  | { ok: true; app: { id: number; slug: string; name: string } }
-  | { ok: false; error: string }
-> {
-  try {
-    const jwt = await createAppJwt();
-    const res = await fetch("https://api.github.com/app", {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return { ok: false, error: `GitHub /app failed: ${res.status} ${text}` };
-    }
-    const json = (await res.json()) as { id?: number; slug?: string; name?: string };
-    return {
-      ok: true,
-      app: {
-        id: Number(json.id ?? 0),
-        slug: String(json.slug ?? ""),
-        name: String(json.name ?? ""),
-      },
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: msg };
-  }
-}
