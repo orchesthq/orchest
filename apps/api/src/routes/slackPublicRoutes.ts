@@ -43,9 +43,9 @@ router.get("/callback", async (req, res, next) => {
 export { router as slackPublicRoutes };
 
 export async function slackEventsHandler(req: express.Request, res: express.Response) {
-  const signingSecrets = (() => {
+  const signingSecrets = await (async () => {
     try {
-      return listSlackSigningSecrets();
+      return await listSlackSigningSecrets();
     } catch (err) {
       console.error("[slack] signing secrets not configured", err);
       return null;

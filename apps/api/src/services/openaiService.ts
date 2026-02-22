@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { isDbConfigured } from "../db/client";
+import { getPartnerSetting } from "../db/schema";
 
 export type MemoryForPrompt = {
   memory_type: "profile" | "episodic" | "semantic";
@@ -24,28 +26,75 @@ const summarySchema = z.object({
   summary: z.string().min(1),
 });
 
-function hasApiKey(): boolean {
-  return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0);
+type OpenAiConfig = {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
+
+const openAiPartnerSettingsSchema = z
+  .object({
+    apiKey: z.string().min(1).optional(),
+    baseUrl: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+  })
+  .passthrough();
+
+const OPENAI_SETTINGS_CACHE_TTL_MS = 30_000;
+let openAiConfigCache:
+  | {
+      loadedAtMs: number;
+      config: OpenAiConfig | null;
+    }
+  | undefined;
+
+function normalizeBaseUrl(raw: string | undefined): string {
+  return (raw ?? "https://api.openai.com/v1").replace(/\/+$/, "");
 }
 
-function baseUrl(): string {
-  return (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+async function getOpenAiConfigFromDb(): Promise<OpenAiConfig | null> {
+  const row = await getPartnerSetting({ partner: "openai", key: "default" });
+  if (!row) return null;
+  const parsed = openAiPartnerSettingsSchema.safeParse(row.settings ?? null);
+  if (!parsed.success) return null;
+  const apiKey = parsed.data.apiKey?.trim();
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    baseUrl: normalizeBaseUrl(parsed.data.baseUrl),
+    model: parsed.data.model ?? "gpt-4o-mini",
+  };
 }
 
-function model(): string {
-  return process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+async function getOpenAiConfig(): Promise<OpenAiConfig | null> {
+  const now = Date.now();
+  if (openAiConfigCache && now - openAiConfigCache.loadedAtMs < OPENAI_SETTINGS_CACHE_TTL_MS) {
+    return openAiConfigCache.config;
+  }
+
+  let config: OpenAiConfig | null = null;
+  if (isDbConfigured()) {
+    try {
+      config = await getOpenAiConfigFromDb();
+    } catch (err) {
+      console.error("[openai] failed to load settings from DB", err);
+    }
+  }
+
+  openAiConfigCache = { loadedAtMs: now, config };
+  return config;
 }
 
-async function chatCompletion(input: { system: string; user: string }): Promise<string> {
-  const url = `${baseUrl()}/chat/completions`;
+async function chatCompletion(cfg: OpenAiConfig, input: { system: string; user: string }): Promise<string> {
+  const url = `${cfg.baseUrl}/chat/completions`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${cfg.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: model(),
+      model: cfg.model,
       messages: [
         { role: "system", content: input.system },
         { role: "user", content: input.user },
@@ -78,7 +127,7 @@ function deterministicMockPlan(taskInput: string): PlanOutput {
       "Summarize the outcome and any follow-ups",
     ],
     notes:
-      "Mock plan generated because OPENAI_API_KEY is not configured. Set OPENAI_API_KEY to enable real planning.",
+      "Mock plan generated because OpenAI settings are not configured. Set partner_settings(openai/default) to enable real planning.",
   };
 }
 
@@ -92,7 +141,7 @@ function deterministicMockSummary(results: {
     "Executed steps:",
     ...results.executed.map((r, i) => `${i + 1}. ${r.step}\n   - ${r.result}`),
     "",
-    "Summary: Completed simulated execution (LLM mocked). Configure OPENAI_API_KEY for real planning/summarization.",
+    "Summary: Completed simulated execution (LLM mocked). Configure OpenAI settings to enable real planning/summarization.",
   ];
   return lines.join("\n");
 }
@@ -102,7 +151,8 @@ export async function planTask(input: {
   agentSystemPrompt: string;
   memories: MemoryForPrompt[];
 }): Promise<PlanOutput> {
-  if (!hasApiKey()) return deterministicMockPlan(input.taskInput);
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return deterministicMockPlan(input.taskInput);
 
   const memoryBlock =
     input.memories.length === 0
@@ -140,7 +190,7 @@ export async function planTask(input: {
     "Create a concise plan. Each step must match a tool: create_branch, create_file_and_commit (for adding/modifying files), or open_pull_request. Use phrases like 'create branch', 'add file X', 'create file X', 'open pull request'.",
   ].join("\n");
 
-  const content = await chatCompletion({ system, user });
+  const content = await chatCompletion(cfg, { system, user });
   const maybeJson = safeParseJson(content);
   const parsed = planSchema.safeParse(maybeJson);
   if (!parsed.success) return deterministicMockPlan(input.taskInput);
@@ -153,7 +203,8 @@ export async function summarizeResults(input: {
   plan: PlanOutput;
   executed: Array<{ step: string; result: string }>;
 }): Promise<string> {
-  if (!hasApiKey()) return deterministicMockSummary(input);
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return deterministicMockSummary(input);
 
   const system = [
     input.agentSystemPrompt,
@@ -175,7 +226,7 @@ export async function summarizeResults(input: {
     "Write a clear, client-facing summary. CRITICAL: If any result says 'Not executed', 'Simulated', 'Mocked', or describes a failure/error, you MUST state explicitly that the step was NOT performed and why. Never claim work was done when it was not.",
   ].join("\n");
 
-  const content = await chatCompletion({ system, user });
+  const content = await chatCompletion(cfg, { system, user });
   const maybeJson = safeParseJson(content);
   const parsed = summarySchema.safeParse(maybeJson);
   if (!parsed.success) return deterministicMockSummary(input);
@@ -192,7 +243,8 @@ export async function tryConversationalReply(input: {
   systemPrompt: string;
   userMessage: string;
 }): Promise<ConversationalResult> {
-  if (!hasApiKey()) return { type: "task" };
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return { type: "task" };
 
   const system = [
     input.systemPrompt,
@@ -205,7 +257,7 @@ export async function tryConversationalReply(input: {
 
   const user = input.userMessage;
 
-  const content = await chatCompletion({ system, user });
+  const content = await chatCompletion(cfg, { system, user });
   const trimmed = content.trim();
   if (trimmed === "__TASK__" || trimmed.toLowerCase().includes("__task__")) {
     return { type: "task" };

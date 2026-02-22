@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { z } from "zod";
 import {
   consumeSlackOauthState,
   createSlackOauthState,
@@ -7,6 +8,7 @@ import {
   getSlackAgentLinkByTeamAndBotKey,
   getSlackInstallationByClientIdAndBotKey,
   getSlackInstallationByTeamIdAndApiAppId,
+  listPartnerSettingsByPartner,
   upsertSlackAgentLink,
   upsertSlackInstallation,
   type SlackAgentLinkRow,
@@ -15,6 +17,7 @@ import {
 import { createTaskForAgentScoped } from "../../db/schema";
 import { runAgentTask } from "../../agent/agentLoop";
 import { tryConversationalReply } from "../../services/openaiService";
+import { isDbConfigured } from "../../db/client";
 
 export class SlackConfigError extends Error {
   constructor(message: string) {
@@ -23,45 +26,85 @@ export class SlackConfigError extends Error {
   }
 }
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new SlackConfigError(`${name} is not configured`);
+const slackBotAppSettingsSchema = z.object({
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  signingSecret: z.string().min(1),
+});
+type SlackBotAppSettings = z.infer<typeof slackBotAppSettingsSchema>;
+
+const SLACK_SETTINGS_CACHE_TTL_MS = 30_000;
+let slackBotAppsCache:
+  | {
+      loadedAtMs: number;
+      appsByBotKey: Record<string, SlackBotAppSettings>;
+    }
+  | undefined;
+
+function requireSlackRedirectUri(): string {
+  const v = process.env.SLACK_REDIRECT_URI;
+  if (!v) throw new SlackConfigError("SLACK_REDIRECT_URI is not configured");
   return v;
 }
 
-function botKeyToPrefix(botKey: string): string {
-  return `SLACK_${botKey.toUpperCase()}`;
+async function loadSlackBotAppsFromDb(): Promise<Record<string, SlackBotAppSettings>> {
+  const rows = await listPartnerSettingsByPartner("slack");
+  const apps: Record<string, SlackBotAppSettings> = {};
+  for (const r of rows) {
+    if (!r.key || r.key === "defaults") continue;
+    const parsed = slackBotAppSettingsSchema.safeParse(r.settings);
+    if (!parsed.success) continue;
+    apps[r.key] = parsed.data;
+  }
+  return apps;
 }
 
-function getSlackBotClientId(botKey: string): string {
-  return requireEnv(`${botKeyToPrefix(botKey)}_CLIENT_ID`);
+async function getSlackBotAppsCached(): Promise<Record<string, SlackBotAppSettings>> {
+  const now = Date.now();
+  if (slackBotAppsCache && now - slackBotAppsCache.loadedAtMs < SLACK_SETTINGS_CACHE_TTL_MS) {
+    return slackBotAppsCache.appsByBotKey;
+  }
+
+  let appsByBotKey: Record<string, SlackBotAppSettings> = {};
+
+  if (isDbConfigured()) {
+    try {
+      appsByBotKey = await loadSlackBotAppsFromDb();
+    } catch (err) {
+      console.error("[slack] failed to load bot apps from DB", err);
+    }
+  }
+
+  slackBotAppsCache = { loadedAtMs: now, appsByBotKey };
+  return appsByBotKey;
 }
 
-function getSlackBotClientSecret(botKey: string): string {
-  return requireEnv(`${botKeyToPrefix(botKey)}_CLIENT_SECRET`);
-}
-
-function getSlackBotSigningSecret(botKey: string): string {
-  return requireEnv(`${botKeyToPrefix(botKey)}_SIGNING_SECRET`);
-}
-
-export function listSlackBotKeys(): string[] {
-  const raw = requireEnv("SLACK_BOT_KEYS");
-  const keys = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (keys.length === 0) throw new SlackConfigError("SLACK_BOT_KEYS is empty");
+export async function listSlackBotKeys(): Promise<string[]> {
+  const apps = await getSlackBotAppsCached();
+  const keys = Object.keys(apps).sort();
+  if (keys.length === 0) throw new SlackConfigError("No Slack bot apps are configured");
   return keys;
 }
 
-export function listSlackSigningSecrets(): string[] {
-  return listSlackBotKeys().map(getSlackBotSigningSecret);
+export async function listSlackSigningSecrets(): Promise<string[]> {
+  const apps = await getSlackBotAppsCached();
+  const secrets = Object.values(apps)
+    .map((a) => a.signingSecret)
+    .filter(Boolean);
+  if (secrets.length === 0) throw new SlackConfigError("No Slack signing secrets are configured");
+  return secrets;
 }
 
-export function getSlackAuthorizeUrl(input: { botKey: string; state: string }): string {
-  const clientId = getSlackBotClientId(input.botKey);
-  const redirectUri = requireEnv("SLACK_REDIRECT_URI");
+async function requireSlackBotApp(botKey: string): Promise<SlackBotAppSettings> {
+  const apps = await getSlackBotAppsCached();
+  const app = apps[botKey];
+  if (!app) throw new SlackConfigError(`Slack bot app '${botKey}' is not configured`);
+  return app;
+}
+
+export async function getSlackAuthorizeUrl(input: { botKey: string; state: string }): Promise<string> {
+  const app = await requireSlackBotApp(input.botKey);
+  const redirectUri = requireSlackRedirectUri();
 
   // Bot scopes needed for: events + messaging + persona customization.
   const scopes = [
@@ -76,7 +119,7 @@ export function getSlackAuthorizeUrl(input: { botKey: string; state: string }): 
   ].join(",");
 
   const url = new URL("https://slack.com/oauth/v2/authorize");
-  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("client_id", app.clientId);
   url.searchParams.set("scope", scopes);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("state", input.state);
@@ -116,9 +159,8 @@ export async function handleSlackOAuthCallback(input: {
   const botKey = (record as any).bot_key ?? "orchest";
   const agentId = (record as any).agent_id ?? null;
 
-  const clientIdEnv = getSlackBotClientId(botKey);
-  const clientSecret = getSlackBotClientSecret(botKey);
-  const redirectUri = requireEnv("SLACK_REDIRECT_URI");
+  const app = await requireSlackBotApp(botKey);
+  const redirectUri = requireSlackRedirectUri();
 
   const res = await fetch("https://slack.com/api/oauth.v2.access", {
     method: "POST",
@@ -126,8 +168,8 @@ export async function handleSlackOAuthCallback(input: {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
-      client_id: clientIdEnv,
-      client_secret: clientSecret,
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
       code: input.code,
       redirect_uri: redirectUri,
     }).toString(),

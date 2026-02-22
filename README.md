@@ -15,7 +15,7 @@ AI Workforce Orchestrator: onboard AI agents as “digital employees”, assign 
 npm install
 ```
 
-2. Create a repo-root `.env` from `.env.example`.
+2. Create `apps/api/.env` from `apps/api/.env.example`.
 
 3. Apply migrations to your Postgres database (Supabase SQL editor is fine):
    - `migrations/001_init.sql`
@@ -27,10 +27,11 @@ npm install
    - `migrations/007_slack_oauth_agent_id.sql`
    - `migrations/008_github_integration.sql`
    - `migrations/009_github_agent_default_repo.sql`
+   - `migrations/010_partner_settings.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
-   - Make sure `DATABASE_URL` matches your repo-root `.env`
+   - Make sure `DATABASE_URL` matches `apps/api/.env`
    - `INTERNAL_SERVICE_SECRET` must match between dashboard + API
 
 5. Run dev:
@@ -121,12 +122,40 @@ Without this, users see "Sending messages to this app has been turned off" and c
 ### 4) Set API env vars (Fly secrets)
 
 Set these on your Fly API app:
-- `SLACK_BOT_KEYS` (comma-separated: `ava,ben,priya,sofia,amira`)
-- `SLACK_<BOT>_CLIENT_ID`
-- `SLACK_<BOT>_CLIENT_SECRET`
-- `SLACK_<BOT>_SIGNING_SECRET`
 - `SLACK_REDIRECT_URI` (must match the redirect URL configured in Slack)
 - `DASHBOARD_BASE_URL` (your Vercel dashboard URL)
+
+Then store Slack app credentials in Postgres (`partner_settings`) instead of env vars:
+
+```sql
+-- One row per Slack bot app (Ava/Ben/...)
+insert into partner_settings (partner, key, settings)
+values (
+  'slack',
+  'ava',
+  jsonb_build_object(
+    'clientId', '<slack client id>',
+    'clientSecret', '<slack client secret>',
+    'signingSecret', '<slack signing secret>'
+  )
+)
+on conflict (partner, key) do update set settings = excluded.settings, updated_at = now();
+```
+
+Optional defaults (used only for legacy Slack intake / testing):
+
+```sql
+insert into partner_settings (partner, key, settings)
+values (
+  'slack',
+  'defaults',
+  jsonb_build_object(
+    'defaultClientName', 'Default Client',
+    'defaultAgentName', 'AI Software Engineer'
+  )
+)
+on conflict (partner, key) do update set settings = excluded.settings, updated_at = now();
+```
 
 ### 5) Connect + enable from dashboard
 
@@ -150,9 +179,21 @@ Each agent can be linked to GitHub with its own commit identity (e.g. "Ava (Acme
 
 ### 2) Set API env vars
 
-- `GITHUB_APP_ID` – App ID (number)
-- `GITHUB_APP_PRIVATE_KEY` – PEM content (use `\n` for newlines in env)
-- `GITHUB_APP_SLUG` – app slug (e.g. `orchest` from `github.com/apps/orchest`)
+Store GitHub App configuration in Postgres (`partner_settings`) instead of env vars:
+
+```sql
+insert into partner_settings (partner, key, settings)
+values (
+  'github',
+  'default',
+  jsonb_build_object(
+    'appId', 123456,
+    'appSlug', 'orchest-github',
+    'privateKey', '-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----'
+  )
+)
+on conflict (partner, key) do update set settings = excluded.settings, updated_at = now();
+```
 
 ### 3) Connect from dashboard
 
@@ -174,6 +215,24 @@ See [ROADMAP.md](./ROADMAP.md) for plans around:
 - **Client isolation**: all DB reads/writes are scoped by client ownership (directly via `client_id`, or via joins from `agent_id`).
 - **Dashboard auth**: NextAuth Credentials backed by `users` + `client_memberships`.
 - **Dashboard → API**: the dashboard calls the API with `x-internal-secret` + `x-client-id`.
-- **LLM integration**: uses an OpenAI-compatible endpoint. If `OPENAI_API_KEY` is absent, planning + summarization return mocked deterministic output so the system remains runnable.
+- **LLM integration**: uses an OpenAI-compatible endpoint. If OpenAI settings are not configured in `partner_settings`, planning + summarization return mocked deterministic output so the system remains runnable.
 - **GitHub tools**: scaffolded tool definitions only (logs intended actions; no real API calls yet).
+
+### OpenAI settings (optional)
+
+Store OpenAI-compatible settings in Postgres (`partner_settings`):
+
+```sql
+insert into partner_settings (partner, key, settings)
+values (
+  'openai',
+  'default',
+  jsonb_build_object(
+    'apiKey', '<openai api key>',
+    'baseUrl', 'https://api.openai.com/v1',
+    'model', 'gpt-4o-mini'
+  )
+)
+on conflict (partner, key) do update set settings = excluded.settings, updated_at = now();
+```
 

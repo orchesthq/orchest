@@ -129,6 +129,15 @@ export type GitHubAgentConnectionRow = {
   updated_at: string;
 };
 
+export type PartnerSettingRow = {
+  id: string;
+  partner: string;
+  key: string;
+  settings: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
 export const DEFAULT_SOFTWARE_ENGINEER_SYSTEM_PROMPT =
   "You are an AI Software Engineer employed by the client. You complete software engineering tasks reliably, communicate clearly, and follow best practices.";
 
@@ -141,6 +150,68 @@ function one<T>(rows: T[], message: string): T {
   const row = rows[0];
   if (!row) throw new Error(message);
   return row;
+}
+
+export async function getPartnerSetting(input: {
+  partner: string;
+  key?: string;
+}): Promise<PartnerSettingRow | null> {
+  const partner = input.partner.trim();
+  const key = (input.key ?? "default").trim();
+  if (!partner) throw new Error("partner is required");
+  if (!key) throw new Error("key is required");
+
+  const { rows } = await query<PartnerSettingRow>(
+    [
+      "select id, partner, key, settings, created_at, updated_at",
+      "from partner_settings",
+      "where partner = $1 and key = $2",
+      "limit 1",
+    ].join("\n"),
+    [partner, key]
+  );
+  return rows[0] ?? null;
+}
+
+export async function listPartnerSettingsByPartner(partnerRaw: string): Promise<PartnerSettingRow[]> {
+  const partner = partnerRaw.trim();
+  if (!partner) throw new Error("partner is required");
+
+  const { rows } = await query<PartnerSettingRow>(
+    [
+      "select id, partner, key, settings, created_at, updated_at",
+      "from partner_settings",
+      "where partner = $1",
+      "order by key asc",
+    ].join("\n"),
+    [partner]
+  );
+  return rows;
+}
+
+export async function upsertPartnerSetting(input: {
+  partner: string;
+  key?: string;
+  settings: unknown;
+}): Promise<PartnerSettingRow> {
+  const partner = input.partner.trim();
+  const key = (input.key ?? "default").trim();
+  if (!partner) throw new Error("partner is required");
+  if (!key) throw new Error("key is required");
+
+  const settingsJson = JSON.stringify(input.settings ?? {});
+  const { rows } = await query<PartnerSettingRow>(
+    [
+      "insert into partner_settings (partner, key, settings)",
+      "values ($1, $2, $3::jsonb)",
+      "on conflict (partner, key) do update set",
+      "  settings = excluded.settings,",
+      "  updated_at = now()",
+      "returning id, partner, key, settings, created_at, updated_at",
+    ].join("\n"),
+    [partner, key, settingsJson]
+  );
+  return one(rows, "Failed to upsert partner setting");
 }
 
 export async function getClientByName(name: string): Promise<ClientRow | null> {
@@ -286,7 +357,7 @@ export async function ensureDefaultAgentForClient(
 
   return await createAgent({
     clientId,
-    name: agentName ?? process.env.DEFAULT_AGENT_NAME ?? "AI Software Engineer",
+    name: agentName ?? "AI Software Engineer",
     role: desiredRole,
     systemPrompt: DEFAULT_SOFTWARE_ENGINEER_SYSTEM_PROMPT,
   });
@@ -571,8 +642,21 @@ export async function ensureSlackDefaultTenant(): Promise<{
   client: ClientRow;
   agent: AgentRow;
 }> {
-  const clientName = process.env.DEFAULT_CLIENT_NAME ?? "Default Client";
-  const agentName = process.env.DEFAULT_AGENT_NAME ?? "AI Software Engineer";
+  const defaultsSchema = z
+    .object({
+      defaultClientName: z.string().min(1).optional(),
+      defaultAgentName: z.string().min(1).optional(),
+    })
+    .passthrough();
+  const defaults = await getPartnerSetting({ partner: "slack", key: "defaults" }).catch(() => null);
+  const parsedDefaults = defaultsSchema.safeParse(defaults?.settings ?? null);
+
+  const clientName = parsedDefaults.success
+    ? (parsedDefaults.data.defaultClientName ?? "Default Client")
+    : "Default Client";
+  const agentName = parsedDefaults.success
+    ? (parsedDefaults.data.defaultAgentName ?? "AI Software Engineer")
+    : "AI Software Engineer";
 
   const client = await ensureClientByName(clientName);
   const agent = await ensureDefaultAgentForClient(client.id, agentName);

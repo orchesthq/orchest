@@ -17,7 +17,7 @@ const router = express.Router();
 router.get("/status", async (req, res, next) => {
   try {
     const clientId = req.clientId!;
-    const botKeys = listSlackBotKeys();
+    const botKeys = await listSlackBotKeys();
     const installations = await listSlackInstallationsByClientId(clientId);
 
     const byBot = Object.fromEntries(
@@ -39,6 +39,10 @@ router.get("/status", async (req, res, next) => {
 
     res.status(200).json({ bots: byBot });
   } catch (err) {
+    if (err instanceof Error && err.name === "SlackConfigError") {
+      res.status(503).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });
@@ -49,9 +53,13 @@ router.get("/install-url", async (req, res, next) => {
     const botKey = z.string().min(1).parse(req.query.bot);
     const agentId = z.string().uuid().optional().parse(req.query.agentId ?? undefined);
     const state = await createSlackInstallState({ clientId, botKey, agentId: agentId ?? null });
-    const url = getSlackAuthorizeUrl({ botKey, state });
+    const url = await getSlackAuthorizeUrl({ botKey, state });
     res.status(200).json({ url });
   } catch (err) {
+    if (err instanceof Error && err.name === "SlackConfigError") {
+      res.status(503).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });

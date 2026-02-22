@@ -53,12 +53,12 @@ router.get("/status", async (req, res, next) => {
 
 router.get("/install-url", async (req, res, next) => {
   try {
-    const url = getGitHubInstallUrl();
+    const url = await getGitHubInstallUrl();
     res.status(200).json({ url });
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "GitHubConfigError") {
       res.status(503).json({
-        error: "GitHub integration is not configured. Set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_SLUG.",
+        error: "GitHub integration is not configured. Configure partner_settings(github/default).",
       });
       return;
     }

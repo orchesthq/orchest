@@ -3,10 +3,10 @@ import path from "path";
 import { createApp } from "./app";
 import { isDbConfigured, pingDb } from "./db/client";
 
-// In local dev, keep a single repo-root `.env` so both workspaces can share it.
+// In local dev, load env from the API workspace (`apps/api/.env`).
 // In production, hosts (Vercel, Fly, etc.) provide env vars and this becomes a no-op.
 dotenv.config({
-  path: process.env.DOTENV_PATH ?? path.resolve(process.cwd(), "../../.env"),
+  path: process.env.DOTENV_PATH ?? path.resolve(process.cwd(), ".env"),
 });
 
 async function main() {

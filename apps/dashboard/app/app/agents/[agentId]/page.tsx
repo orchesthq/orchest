@@ -253,7 +253,7 @@ export default async function AgentPage({
 
           {!githubStatus?.configured ? (
             <p className="text-xs text-zinc-500">
-              GitHub integration is not configured. Set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_SLUG in the API.
+              GitHub integration is not configured in the API.
             </p>
           ) : !githubStatus?.connected ? (
             <Link

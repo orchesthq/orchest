@@ -46,7 +46,7 @@ function requireClientId(req: express.Request, res: express.Response, next: expr
   if (!parsed.success) {
     res.status(400).json({
       error:
-        "Missing or invalid x-client-id header (must be a UUID). For Slack, client is resolved via DEFAULT_CLIENT_NAME.",
+        "Missing or invalid x-client-id header (must be a UUID). For Slack, client is resolved via installation mapping.",
     });
     return;
   }

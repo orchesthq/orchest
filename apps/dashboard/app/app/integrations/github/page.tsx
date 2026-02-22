@@ -46,7 +46,7 @@ export default async function GitHubIntegrationPage() {
             <div className="text-base font-semibold text-zinc-900">Organization connection</div>
             <div className="mt-1 text-sm text-zinc-600">
               {status?.configured === false ? (
-                <>GitHub integration is not configured in the API (GITHUB_APP_* env vars).</>
+                <>GitHub integration is not configured in the API.</>
               ) : status?.connected ? (
                 <>Connected to <strong>{status.ownerLogin}</strong></>
               ) : (

@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { z } from "zod";
 import {
   createGitHubAgentConnection,
   getGitHubAgentConnectionByAgentId,
@@ -9,6 +10,8 @@ import {
   type GitHubInstallationRow,
 } from "../../db/schema";
 import { getAgentByIdScoped } from "../../db/schema";
+import { isDbConfigured } from "../../db/client";
+import { getPartnerSetting } from "../../db/schema";
 
 export class GitHubConfigError extends Error {
   constructor(message: string) {
@@ -17,36 +20,86 @@ export class GitHubConfigError extends Error {
   }
 }
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new GitHubConfigError(`${name} is not configured`);
-  return v;
+const githubPartnerSettingsSchema = z
+  .object({
+    appId: z.union([z.number().int().positive(), z.string().min(1)]),
+    privateKey: z.string().min(1),
+    appSlug: z.string().min(1),
+  })
+  .passthrough();
+
+type GitHubAppConfig = {
+  appId: number;
+  privateKey: string;
+  appSlug: string;
+};
+
+const GITHUB_SETTINGS_CACHE_TTL_MS = 30_000;
+let githubAppConfigCache:
+  | {
+      loadedAtMs: number;
+      config: GitHubAppConfig | null;
+    }
+  | undefined;
+
+function parseAppId(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
-function getAppId(): number {
-  const v = requireEnv("GITHUB_APP_ID");
-  const n = parseInt(v, 10);
-  if (!Number.isFinite(n)) throw new GitHubConfigError("GITHUB_APP_ID must be a number");
-  return n;
+async function getGitHubAppConfigFromDb(): Promise<GitHubAppConfig | null> {
+  const row = await getPartnerSetting({ partner: "github", key: "default" });
+  if (!row) return null;
+  const parsed = githubPartnerSettingsSchema.safeParse(row.settings ?? null);
+  if (!parsed.success) return null;
+  const appId = parseAppId(parsed.data.appId);
+  if (!appId) return null;
+  return {
+    appId,
+    privateKey: String(parsed.data.privateKey).replace(/\\n/g, "\n"),
+    appSlug: parsed.data.appSlug,
+  };
 }
 
-function getPrivateKey(): string {
-  const raw = process.env.GITHUB_APP_PRIVATE_KEY;
-  if (!raw) throw new GitHubConfigError("GITHUB_APP_PRIVATE_KEY is not configured");
-  return raw.replace(/\\n/g, "\n");
+async function getGitHubAppConfigOrNull(): Promise<GitHubAppConfig | null> {
+  const now = Date.now();
+  if (githubAppConfigCache && now - githubAppConfigCache.loadedAtMs < GITHUB_SETTINGS_CACHE_TTL_MS) {
+    return githubAppConfigCache.config;
+  }
+
+  let config: GitHubAppConfig | null = null;
+  if (isDbConfigured()) {
+    try {
+      config = await getGitHubAppConfigFromDb();
+    } catch (err) {
+      console.error("[github] failed to load app settings from DB", err);
+    }
+  }
+
+  githubAppConfigCache = { loadedAtMs: now, config };
+  return config;
 }
 
-function getAppSlug(): string {
-  return requireEnv("GITHUB_APP_SLUG");
+async function requireGitHubAppConfig(): Promise<GitHubAppConfig> {
+  const cfg = await getGitHubAppConfigOrNull();
+  if (!cfg) {
+    throw new GitHubConfigError(
+      "GitHub integration is not configured. Configure partner_settings(github/default)."
+    );
+  }
+  return cfg;
 }
 
 /**
  * Create a JWT for authenticating as the GitHub App (RS256).
  * https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app
  */
-function createAppJwt(): string {
-  const appId = getAppId();
-  const privateKey = getPrivateKey();
+async function createAppJwt(): Promise<string> {
+  const { appId, privateKey } = await requireGitHubAppConfig();
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iat: now - 60,
@@ -69,7 +122,7 @@ export async function getInstallationAccessToken(installationId: number): Promis
   token: string;
   expiresAt: Date | null;
 }> {
-  const jwt = createAppJwt();
+  const jwt = await createAppJwt();
   const res = await fetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
@@ -96,8 +149,9 @@ export async function getInstallationAccessToken(installationId: number): Promis
  * Install URL: user is sent here to install the Orchest GitHub App.
  * Append state with clientId so we can associate the install.
  */
-export function getGitHubInstallUrl(): string {
-  const slug = getAppSlug();
+export async function getGitHubInstallUrl(): Promise<string> {
+  const { appSlug } = await requireGitHubAppConfig();
+  const slug = appSlug;
   return `https://github.com/apps/${slug}/installations/new`;
 }
 
@@ -111,7 +165,7 @@ export async function handleGitHubInstallationCallback(input: {
 }): Promise<GitHubInstallationRow> {
   const { token, expiresAt } = await getInstallationAccessToken(input.installationId);
 
-  const jwt = createAppJwt();
+  const jwt = await createAppJwt();
   const res = await fetch("https://api.github.com/app/installations/" + input.installationId, {
     headers: {
       Authorization: `Bearer ${jwt}`,
@@ -135,12 +189,9 @@ export async function handleGitHubInstallationCallback(input: {
   });
 }
 
-function isGitHubConfigured(): boolean {
-  return Boolean(
-    process.env.GITHUB_APP_ID &&
-    process.env.GITHUB_APP_PRIVATE_KEY &&
-    process.env.GITHUB_APP_SLUG
-  );
+async function isGitHubConfigured(): Promise<boolean> {
+  const cfg = await getGitHubAppConfigOrNull();
+  return Boolean(cfg?.appId && cfg?.privateKey && cfg?.appSlug);
 }
 
 export async function getGitHubStatus(clientId: string): Promise<{
@@ -149,7 +200,7 @@ export async function getGitHubStatus(clientId: string): Promise<{
   ownerLogin?: string;
   installationId?: number;
 }> {
-  if (!isGitHubConfigured()) {
+  if (!(await isGitHubConfigured())) {
     return { connected: false, configured: false };
   }
   const inst = await getGitHubInstallationByClientId(clientId);
