@@ -7,6 +7,7 @@ import {
   linkAgentToGitHub,
   handleGitHubInstallationCallback,
   listInstallationRepos,
+  checkGitHubAppAuth,
 } from "../integrations/github/githubService";
 import { deleteGitHubInstallationByClientId } from "../db/schema";
 
@@ -47,6 +48,15 @@ router.get("/status", async (req, res, next) => {
     const clientId = req.clientId!;
     const status = await getGitHubStatus(clientId);
     res.status(200).json(status);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/app-check", async (_req, res, next) => {
+  try {
+    const result = await checkGitHubAppAuth();
+    res.status(200).json(result);
   } catch (err) {
     next(err);
   }

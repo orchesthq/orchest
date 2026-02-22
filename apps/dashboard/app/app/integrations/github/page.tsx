@@ -10,6 +10,10 @@ type GitHubStatus = {
   ownerLogin?: string;
 };
 
+type GitHubAppCheck =
+  | { ok: true; app: { id: number; slug: string; name: string } }
+  | { ok: false; error: string };
+
 export default async function GitHubIntegrationPage(props: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
@@ -36,6 +40,17 @@ export default async function GitHubIntegrationPage(props: {
     });
   } catch {
     status = null;
+  }
+
+  let appCheck: GitHubAppCheck | null = null;
+  if (error === "github_install_failed" || error === "github_install_url_failed") {
+    try {
+      appCheck = await apiFetchForClient<GitHubAppCheck>(clientId, "/internal/github/app-check", {
+        method: "GET",
+      });
+    } catch {
+      appCheck = null;
+    }
   }
 
   return (
@@ -67,6 +82,26 @@ export default async function GitHubIntegrationPage(props: {
                           ? "Failed to disconnect. Check the API logs for details."
                           : "Something went wrong. Check the API logs for details."}
           </div>
+          {appCheck && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-white/60 p-3 text-xs text-amber-900">
+              <div className="font-medium">GitHub App auth check</div>
+              <div className="mt-1 font-mono whitespace-pre-wrap">
+                {appCheck.ok
+                  ? `OK: ${appCheck.app.name} (id=${appCheck.app.id}, slug=${appCheck.app.slug})`
+                  : `FAILED: ${appCheck.error}`}
+              </div>
+              {appCheck.ok && (
+                <div className="mt-2">
+                  If you still see JWT decode errors, double-check that the installation you selected belongs to this GitHub App.
+                </div>
+              )}
+              {!appCheck.ok && (
+                <div className="mt-2">
+                  This usually means the stored `appId` doesn’t match the private key, or the PEM string is malformed.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
