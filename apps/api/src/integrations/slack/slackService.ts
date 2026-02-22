@@ -597,7 +597,26 @@ async function fetchThreadContext(input: {
     });
 
     const messages: any[] = Array.isArray(json?.messages) ? json.messages : [];
-    const lines = messages
+    let source = messages;
+
+    // If there's no actual thread (just the triggering message), fall back to channel history so the
+    // agent maintains context in channels where people don't use threads.
+    if (messages.length <= 1) {
+      try {
+        const hist = await slackApi(input.token, "conversations.history", {
+          channel: input.channel,
+          latest: input.threadTs,
+          inclusive: true,
+          limit: 12,
+        });
+        const hm: any[] = Array.isArray(hist?.messages) ? hist.messages : [];
+        if (hm.length > 1) source = hm.reverse(); // oldest → newest
+      } catch {
+        // ignore
+      }
+    }
+
+    const lines = source
       .filter((m) => typeof m?.text === "string" && m.text.trim().length > 0)
       .slice(-10)
       .map((m) => {
@@ -611,6 +630,51 @@ async function fetchThreadContext(input: {
   } catch {
     return "";
   }
+}
+
+function deriveCanvasTitle(input: { taskText: string; agentName: string }): string {
+  const raw = String(input.taskText ?? "").replace(/\s+/g, " ").trim();
+  const lower = raw.toLowerCase();
+  let title = "";
+
+  if (lower.includes("intro") || lower.includes("introduction") || lower.includes("about yourself") || lower.includes("about you")) {
+    title = `Introduction — ${input.agentName}`;
+  } else if (lower.includes("how to work with")) {
+    title = `How to work with ${input.agentName}`;
+  } else if (lower.includes("canvas")) {
+    title = `${input.agentName} — Canvas`;
+  } else {
+    title = raw.slice(0, 80) || `${input.agentName} — Canvas`;
+  }
+
+  // Slack title length guardrail.
+  if (title.length > 120) title = title.slice(0, 120);
+  return title;
+}
+
+function stripCanvasDisclaimers(markdown: string): string {
+  const lines = String(markdown ?? "").split(/\r?\n/);
+  const out: string[] = [];
+  let droppedLeading = 0;
+
+  const isDisclaimerLine = (s: string) =>
+    /can'?t\s+directly\s+create\s+.*canvas/i.test(s) ||
+    /no\s+slack\s+(ui|api)\s+access/i.test(s) ||
+    /paste-?ready/i.test(s) ||
+    /copy\/paste/i.test(s);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (out.length === 0 && droppedLeading < 12 && trimmed && isDisclaimerLine(trimmed)) {
+      droppedLeading += 1;
+      continue;
+    }
+    out.push(line);
+  }
+
+  // Also drop an immediate following blank line block if we dropped something.
+  while (droppedLeading > 0 && out.length > 0 && out[0]?.trim() === "") out.shift();
+  return out.join("\n").trim();
 }
 
 function slackMrkdwnFromMarkdown(text: string): string {
@@ -854,11 +918,12 @@ async function runTaskAndReply(input: {
 
       if (wantsCanvas || isLong) {
         try {
-          const title = input.taskText.trim().slice(0, 80) || `Task ${task.id.slice(0, 8)}`;
+          const title = deriveCanvasTitle({ taskText: input.taskText, agentName: agent.name });
+          const canvasMarkdown = stripCanvasDisclaimers(result.summary);
           const canvas = await createSlackCanvasFromMarkdown({
             token: input.installation.bot_access_token,
             title,
-            markdown: result.summary,
+            markdown: canvasMarkdown,
             channelId: input.channel,
             requestUserId: input.requestUserId,
           });
@@ -893,7 +958,7 @@ async function runTaskAndReply(input: {
               token: input.installation.bot_access_token,
               channel: input.channel,
               threadTs: input.threadTs,
-              text: preview,
+              text: stripCanvasDisclaimers(preview),
               username: input.agentLink.display_name,
               iconUrl: input.agentLink.icon_url ?? undefined,
             });
