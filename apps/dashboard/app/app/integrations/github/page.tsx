@@ -54,15 +54,33 @@ export default async function GitHubIntegrationPage() {
               )}
             </div>
           </div>
-          {status?.configured && !status?.connected && (
-            <Link
-              href={`/app/integrations/github/connect?returnTo=${encodeURIComponent("/app/integrations/github")}`}
-              className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Connect GitHub
-            </Link>
-          )}
+          <div className="flex items-center gap-2">
+            {status?.configured && !status?.connected && (
+              <Link
+                href={`/app/integrations/github/connect?returnTo=${encodeURIComponent("/app/integrations/github")}`}
+                className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              >
+                Connect GitHub
+              </Link>
+            )}
+
+            {status?.configured && status?.connected && (
+              <form action="/app/integrations/github/disconnect" method="post">
+                <button
+                  type="submit"
+                  className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                >
+                  Disconnect
+                </button>
+              </form>
+            )}
+          </div>
         </div>
+        {status?.connected && (
+          <p className="mt-3 text-xs text-zinc-500">
+            Disconnecting will unlink this organization and remove all per-agent GitHub links for this client. You can reconnect any time.
+          </p>
+        )}
       </div>
 
       <p className="text-sm text-zinc-500">

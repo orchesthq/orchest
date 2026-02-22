@@ -931,6 +931,15 @@ export async function upsertGitHubInstallation(input: {
   return one(rows, "Failed to upsert GitHub installation");
 }
 
+export async function deleteGitHubInstallationByClientId(clientId: string): Promise<boolean> {
+  assertUuid(clientId, "clientId");
+  const { rows } = await query<{ id: string }>(
+    "delete from github_installations where client_id = $1 returning id",
+    [clientId]
+  );
+  return rows.length > 0;
+}
+
 export async function getGitHubAgentConnectionByAgentId(
   agentId: string
 ): Promise<GitHubAgentConnectionRow | null> {

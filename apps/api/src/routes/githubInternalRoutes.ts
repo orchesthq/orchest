@@ -8,6 +8,7 @@ import {
   handleGitHubInstallationCallback,
   listInstallationRepos,
 } from "../integrations/github/githubService";
+import { deleteGitHubInstallationByClientId } from "../db/schema";
 
 const router = express.Router();
 
@@ -62,6 +63,16 @@ router.get("/install-url", async (req, res, next) => {
       });
       return;
     }
+    next(err);
+  }
+});
+
+router.post("/disconnect", async (req, res, next) => {
+  try {
+    const clientId = req.clientId!;
+    const deleted = await deleteGitHubInstallationByClientId(clientId);
+    res.status(200).json({ ok: true, deleted });
+  } catch (err) {
     next(err);
   }
 });
