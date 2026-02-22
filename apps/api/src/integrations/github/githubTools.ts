@@ -4,8 +4,11 @@ import {
   createPullRequest,
   createRef,
   createTree,
+  compareCommits,
+  getBlobContentBytes,
   getCommit,
   getFileContent,
+  getFileContentBytes,
   getRef,
   getTree,
   searchCode,
@@ -169,6 +172,17 @@ export async function create_file_and_commit(
   const repo = creds.repo;
 
   try {
+    // Guardrail: this tool overwrites files. If the caller likely derived content from a truncated read,
+    // we want the model to use chunked reads or patch-based editing instead.
+    const hasTruncMarker = /\[truncated\]/i.test(String(input.content ?? "")) || /\[truncated\]/i.test(String(input.message ?? ""));
+    if (hasTruncMarker) {
+      return {
+        ok: false,
+        message:
+          "Not executed: refusal to overwrite a file because the content appears to be based on truncated input. Use github_read_file_chunk to fetch the full file or use a patch-based tool.",
+      };
+    }
+
     const branchRef = await getRef(creds.token, repo, input.branch);
     const commitSha = branchRef.object.sha;
     const commit = await getCommit(creds.token, repo, commitSha);
@@ -255,16 +269,237 @@ export async function github_read_file(
 
   try {
     const ref = input.ref?.trim() || creds.defaultBranch;
-    const content = await getFileContent(creds.token, repo, input.path, ref);
-    const truncated = content.length > 40_000 ? content.slice(0, 40_000) + "\n\n[truncated]" : content;
+    const { bytes, size } = await getFileContentBytes(creds.token, repo, input.path, ref);
+    const content = bytes.toString("utf8");
+    const maxChars = 40_000;
+    const isTruncated = content.length > maxChars;
+    const truncated = isTruncated ? content.slice(0, maxChars) + "\n\n[truncated]" : content;
     return {
       ok: true,
       message: `Read ${input.path} at ${ref} (${content.length} chars).`,
-      metadata: { path: input.path, ref, content: truncated },
+      metadata: {
+        path: input.path,
+        ref,
+        content: truncated,
+        truncated: isTruncated,
+        totalLength: content.length,
+        totalBytes: size,
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, message: `Failed to read file: ${msg}` };
+  }
+}
+
+export async function github_read_file_chunk(
+  input: { repo: string; path: string; ref?: string; offset: number; length: number },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
+  if (!creds) return { ok: false, message: noAccessMessage() };
+  if ("error" in creds) return { ok: false, message: creds.error };
+  const repo = creds.repo;
+
+  const offset = Math.max(0, Math.floor(Number(input.offset ?? 0)));
+  const length = Math.max(1, Math.min(200_000, Math.floor(Number(input.length ?? 1))));
+
+  try {
+    const ref = input.ref?.trim() || creds.defaultBranch;
+    const { bytes, size } = await getFileContentBytes(creds.token, repo, input.path, ref);
+    const end = Math.min(bytes.length, offset + length);
+    const slice = bytes.subarray(offset, end);
+    const content = slice.toString("utf8");
+    return {
+      ok: true,
+      message: `Read ${input.path} bytes [${offset}, ${end}) at ${ref} (${content.length} chars).`,
+      metadata: {
+        path: input.path,
+        ref,
+        offset,
+        length: end - offset,
+        totalBytes: size,
+        content,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to read file chunk: ${msg}` };
+  }
+}
+
+export async function github_list_changed_files(
+  input: { repo: string; base: string; head: string },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
+  if (!creds) return { ok: false, message: noAccessMessage() };
+  if ("error" in creds) return { ok: false, message: creds.error };
+  const repo = creds.repo;
+
+  try {
+    const cmp = await compareCommits(creds.token, repo, input.base, input.head);
+    const files = cmp.files.slice(0, 200);
+    const totalAdd = files.reduce((n, f) => n + (f.additions || 0), 0);
+    const totalDel = files.reduce((n, f) => n + (f.deletions || 0), 0);
+    return {
+      ok: true,
+      message: `Compare ${input.base}...${input.head}: ${files.length} files changed (+${totalAdd}/-${totalDel}).`,
+      metadata: { base: input.base, head: input.head, files, totals: { additions: totalAdd, deletions: totalDel } },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to list changed files: ${msg}` };
+  }
+}
+
+function parseUnifiedDiff(patch: string): Array<{ path: string; hunks: Array<{ lines: string[] }> }> {
+  const text = String(patch ?? "");
+  const lines = text.split(/\r?\n/);
+  const files: Array<{ path: string; hunks: Array<{ lines: string[] }> }> = [];
+  let current: { path: string; hunks: Array<{ lines: string[] }> } | null = null;
+  let currentHunk: { lines: string[] } | null = null;
+
+  const flushHunk = () => {
+    if (current && currentHunk) {
+      current.hunks.push(currentHunk);
+      currentHunk = null;
+    }
+  };
+  const flushFile = () => {
+    flushHunk();
+    if (current) {
+      files.push(current);
+      current = null;
+    }
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      flushFile();
+      // Example: diff --git a/path b/path
+      const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+      const path = m?.[2] ?? m?.[1];
+      if (path) current = { path, hunks: [] };
+      continue;
+    }
+    if (!current) continue;
+
+    if (line.startsWith("@@")) {
+      flushHunk();
+      currentHunk = { lines: [] };
+      continue;
+    }
+    if (!currentHunk) continue;
+    if (line.startsWith("\\ No newline at end of file")) continue;
+    // Keep only diff body lines.
+    if (line.startsWith(" ") || line.startsWith("+") || line.startsWith("-")) {
+      currentHunk.lines.push(line);
+    }
+  }
+  flushFile();
+  return files.filter((f) => f.hunks.length > 0);
+}
+
+function applyHunksToText(original: string, hunks: Array<{ lines: string[] }>): string {
+  const origLines = original.split(/\r?\n/);
+  let idx = 0;
+  const out: string[] = [];
+
+  const fail = (msg: string) => {
+    throw new Error(`Patch did not apply cleanly: ${msg}`);
+  };
+
+  for (const hunk of hunks) {
+    for (const raw of hunk.lines) {
+      const tag = raw[0];
+      const content = raw.slice(1);
+      if (tag === " ") {
+        const got = origLines[idx] ?? "";
+        if (got !== content) fail(`context mismatch at line ${idx + 1}`);
+        out.push(got);
+        idx += 1;
+        continue;
+      }
+      if (tag === "-") {
+        const got = origLines[idx] ?? "";
+        if (got !== content) fail(`delete mismatch at line ${idx + 1}`);
+        idx += 1;
+        continue;
+      }
+      if (tag === "+") {
+        out.push(content);
+        continue;
+      }
+    }
+  }
+  // Append remaining original.
+  out.push(...origLines.slice(idx));
+  return out.join("\n");
+}
+
+export async function github_apply_patch(
+  input: { repo: string; branch: string; patch: string; message: string },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
+  if (!creds) return { ok: false, message: noAccessMessage() };
+  if ("error" in creds) return { ok: false, message: creds.error };
+  if (creds.accessLevel === "read") return { ok: false, message: readOnlyMessage() };
+
+  const repo = creds.repo;
+  const patch = String(input.patch ?? "").trim();
+  if (!patch) return { ok: false, message: "Not executed: patch is empty." };
+
+  try {
+    const files = parseUnifiedDiff(patch);
+    if (files.length === 0) {
+      return { ok: false, message: "Not executed: patch contained no hunks." };
+    }
+    if (files.length > 10) {
+      return { ok: false, message: "Not executed: patch touches too many files (max 10)." };
+    }
+
+    const branchRef = await getRef(creds.token, repo, input.branch);
+    const commitSha = branchRef.object.sha;
+    const commit = await getCommit(creds.token, repo, commitSha);
+    const baseTreeSha = commit.tree.sha;
+
+    const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+    const changedFiles: string[] = [];
+
+    for (const f of files) {
+      const original = await getFileContent(creds.token, repo, f.path, input.branch);
+      const updated = applyHunksToText(original, f.hunks);
+      if (updated === original) continue;
+      const blob = await createBlob(creds.token, repo, updated);
+      treeEntries.push({ path: f.path, mode: "100644", type: "blob", sha: blob.sha });
+      changedFiles.push(f.path);
+    }
+
+    if (treeEntries.length === 0) {
+      return { ok: true, message: "No changes to apply (patch resulted in identical content)." };
+    }
+
+    const tree = await createTree(creds.token, repo, baseTreeSha, treeEntries);
+    const newCommit = await createCommit(
+      creds.token,
+      repo,
+      input.message,
+      tree.sha,
+      commitSha,
+      creds.author
+    );
+    await updateRef(creds.token, repo, input.branch, newCommit.sha);
+
+    return {
+      ok: true,
+      message: `Applied patch to ${changedFiles.length} file(s) and committed: ${input.message}`,
+      metadata: { files: changedFiles },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to apply patch: ${msg}` };
   }
 }
 

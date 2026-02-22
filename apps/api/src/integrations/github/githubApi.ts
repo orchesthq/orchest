@@ -159,6 +159,75 @@ export async function getFileContent(token: string, repo: string, path: string, 
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
+export async function getFileContentBytes(
+  token: string,
+  repo: string,
+  path: string,
+  ref?: string
+): Promise<{ bytes: Buffer; size: number }> {
+  const [owner, name] = repo.split("/");
+  if (!owner || !name) throw new Error(`Invalid repo format: ${repo}`);
+  const qp = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const r = (await githubApi(
+    token,
+    "GET",
+    `/repos/${owner}/${name}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}${qp}`
+  )) as any;
+
+  if (!r || Array.isArray(r)) {
+    throw new Error(`Path is not a file: ${path}`);
+  }
+  const encoding = String(r.encoding ?? "");
+  const content = String(r.content ?? "");
+  const size = Number(r.size ?? 0);
+  if (encoding !== "base64") {
+    throw new Error(`Unsupported content encoding: ${encoding || "unknown"}`);
+  }
+  const b64 = content.replace(/\s+/g, "");
+  const bytes = Buffer.from(b64, "base64");
+  return { bytes, size: Number.isFinite(size) && size > 0 ? size : bytes.length };
+}
+
+export async function getBlobContentBytes(
+  token: string,
+  repo: string,
+  sha: string
+): Promise<{ bytes: Buffer; size: number }> {
+  const [owner, name] = repo.split("/");
+  if (!owner || !name) throw new Error(`Invalid repo format: ${repo}`);
+  const r = (await githubApi(token, "GET", `/repos/${owner}/${name}/git/blobs/${sha}`)) as any;
+  const encoding = String(r?.encoding ?? "");
+  const content = String(r?.content ?? "");
+  const size = Number(r?.size ?? 0);
+  if (encoding !== "base64") {
+    throw new Error(`Unsupported blob encoding: ${encoding || "unknown"}`);
+  }
+  const b64 = content.replace(/\s+/g, "");
+  const bytes = Buffer.from(b64, "base64");
+  return { bytes, size: Number.isFinite(size) && size > 0 ? size : bytes.length };
+}
+
+export async function compareCommits(
+  token: string,
+  repo: string,
+  base: string,
+  head: string
+): Promise<{ files: Array<{ filename: string; status: string; additions: number; deletions: number; changes: number }> }> {
+  const [owner, name] = repo.split("/");
+  if (!owner || !name) throw new Error(`Invalid repo format: ${repo}`);
+  const r = (await githubApi(token, "GET", `/repos/${owner}/${name}/compare/${base}...${head}`)) as any;
+  const files: any[] = Array.isArray(r?.files) ? r.files : [];
+  return {
+    files: files.map((f) => ({
+      filename: String(f.filename ?? ""),
+      status: String(f.status ?? ""),
+      additions: Number(f.additions ?? 0),
+      deletions: Number(f.deletions ?? 0),
+      changes: Number(f.changes ?? 0),
+    })),
+  };
+}
+
 export async function getTree(
   token: string,
   repo: string,

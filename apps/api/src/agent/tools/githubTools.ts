@@ -3,7 +3,10 @@ import { ToolRegistry, type ToolContext } from "./registry";
 import {
   create_branch,
   create_file_and_commit,
+  github_apply_patch,
+  github_list_changed_files,
   github_list_tree,
+  github_read_file_chunk,
   github_read_file,
   github_search_code,
   open_pull_request,
@@ -68,6 +71,22 @@ export function registerGitHubTools(registry: ToolRegistry): void {
   });
 
   registry.register({
+    name: "github_read_file_chunk",
+    description:
+      "Read a slice of a file from the linked GitHub repo by byte offset/length (use for large files).",
+    inputSchema: z.object({
+      repo: z.string().default(""),
+      path: z.string().min(1),
+      ref: z.string().optional(),
+      offset: z.number().int().nonnegative().default(0),
+      length: z.number().int().positive().max(200_000).default(50_000),
+    }),
+    execute: async (ctx: ToolContext, args) => {
+      return await github_read_file_chunk(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+    },
+  });
+
+  registry.register({
     name: "github_list_tree",
     description: "List files/directories in the linked GitHub repo at a ref (optionally under a path).",
     inputSchema: z.object({
@@ -90,6 +109,34 @@ export function registerGitHubTools(registry: ToolRegistry): void {
     }),
     execute: async (ctx: ToolContext, args) => {
       return await github_search_code(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+    },
+  });
+
+  registry.register({
+    name: "github_apply_patch",
+    description: "Apply a unified diff patch to one or more files and commit the result (safer than overwriting).",
+    inputSchema: z.object({
+      repo: z.string().default(""),
+      branch: z.string().min(1),
+      patch: z.string().min(1),
+      message: z.string().min(1),
+    }),
+    execute: async (ctx: ToolContext, args) => {
+      return await github_apply_patch(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+    },
+  });
+
+  registry.register({
+    name: "github_list_changed_files",
+    description:
+      "List changed files between two refs/commits (use before opening PRs to sanity-check scope).",
+    inputSchema: z.object({
+      repo: z.string().default(""),
+      base: z.string().min(1),
+      head: z.string().min(1),
+    }),
+    execute: async (ctx: ToolContext, args) => {
+      return await github_list_changed_files(args, { clientId: ctx.clientId, agentId: ctx.agentId });
     },
   });
 }

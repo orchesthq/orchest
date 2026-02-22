@@ -116,6 +116,10 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
     "Make reasonable assumptions for minor details; only ask clarifying questions when you're blocked or when a meaningful choice would change the outcome.",
     "If the request is ambiguous, missing key information, or requires an important choice, ask up to 5 concise clarifying questions and stop (no tool calls).",
     "If you have enough information, proceed. Use tools when you need to inspect or change the linked GitHub repository.",
+    "CRITICAL GitHub safety rules:",
+    "- Prefer github_apply_patch over create_file_and_commit for existing files (avoid whole-file rewrites).",
+    "- If github_read_file reports truncated=true (or content includes '[truncated]'), do NOT overwrite that file. Use github_read_file_chunk to fetch the needed parts first, then use github_apply_patch.",
+    "- Before opening a PR, call github_list_changed_files and confirm the changed files match your intended scope. If not, fix before opening the PR.",
     "When calling tools, include a short, user-safe status sentence in the assistant message (no hidden reasoning).",
     "If you have enough information, respond with a final user-facing answer.",
   ].join("\n");
