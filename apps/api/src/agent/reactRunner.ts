@@ -128,44 +128,46 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
       return { final: resp.final, executed };
     }
 
-    const call = resp.toolCall;
-    toolCalls++;
-    if (toolCalls > maxToolCalls) {
-      return {
-        final: "Stopped: exceeded maximum tool calls while working on this task.",
-        executed,
-      };
-    }
-
-    const ctx = { taskId: input.taskId, clientId: input.clientId, agentId: input.agentId };
-    const toolStart = Date.now();
-    const toolResult: ToolResult = await input.registry.execute({
-      ctx,
-      name: call.name,
-      args: call.arguments,
-    });
-    const toolMs = Date.now() - toolStart;
-
-    console.log("[agent][react] tool", {
-      taskId: input.taskId,
-      iteration: i + 1,
-      tool: call.name,
-      ok: toolResult.ok,
-      ms: toolMs,
-    });
-
-    executed.push({
-      step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`,
-      result: toolResult.message,
-    });
-
     // Feed tool results back into the model.
     messages.push(resp.assistantMessage);
-    messages.push({
-      role: "tool",
-      tool_call_id: call.id,
-      content: JSON.stringify(compactToolResultForModel(toolResult)),
-    });
+
+    const ctx = { taskId: input.taskId, clientId: input.clientId, agentId: input.agentId };
+    for (const call of resp.toolCalls) {
+      toolCalls++;
+      if (toolCalls > maxToolCalls) {
+        return {
+          final: "Stopped: exceeded maximum tool calls while working on this task.",
+          executed,
+        };
+      }
+
+      const toolStart = Date.now();
+      const toolResult: ToolResult = await input.registry.execute({
+        ctx,
+        name: call.name,
+        args: call.arguments,
+      });
+      const toolMs = Date.now() - toolStart;
+
+      console.log("[agent][react] tool", {
+        taskId: input.taskId,
+        iteration: i + 1,
+        tool: call.name,
+        ok: toolResult.ok,
+        ms: toolMs,
+      });
+
+      executed.push({
+        step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`,
+        result: toolResult.message,
+      });
+
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify(compactToolResultForModel(toolResult)),
+      });
+    }
   }
 
   return {

@@ -424,7 +424,7 @@ export async function agentChatWithTools(input: {
   tools: Array<{ type: "function"; function: { name: string; description: string; parameters: any } }>;
 }): Promise<
   | { type: "final"; final: string }
-  | { type: "tool"; assistantMessage: OpenAiChatMessage; toolCall: AgentToolCall }
+  | { type: "tool"; assistantMessage: OpenAiChatMessage; toolCalls: AgentToolCall[] }
 > {
   const cfg = await getOpenAiConfig();
   if (!cfg) {
@@ -435,21 +435,24 @@ export async function agentChatWithTools(input: {
     messages: [{ role: "system", content: input.system }, ...input.messages],
     tools: input.tools,
     tool_choice: "auto",
+    parallel_tool_calls: false,
   });
 
   const msg = (json?.choices?.[0]?.message ?? null) as OpenAiChatMessage | null;
   const toolCalls = (msg as any)?.tool_calls as OpenAiToolCall[] | undefined;
   if (msg && Array.isArray(toolCalls) && toolCalls.length > 0) {
-    const tc = toolCalls[0]!;
-    const parsedArgs = safeParseJson(tc.function?.arguments ?? "");
-    const argsObj =
-      parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)
-        ? (parsedArgs as Record<string, unknown>)
-        : {};
+    const parsedToolCalls: AgentToolCall[] = toolCalls.map((tc) => {
+      const parsedArgs = safeParseJson(tc.function?.arguments ?? "");
+      const argsObj =
+        parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)
+          ? (parsedArgs as Record<string, unknown>)
+          : {};
+      return { id: tc.id, name: tc.function.name, arguments: argsObj };
+    });
     return {
       type: "tool",
       assistantMessage: { role: "assistant", content: msg.content ?? null, tool_calls: toolCalls },
-      toolCall: { id: tc.id, name: tc.function.name, arguments: argsObj },
+      toolCalls: parsedToolCalls,
     };
   }
 
@@ -464,7 +467,7 @@ export async function agentChatWithTools(input: {
         return {
           type: "tool",
           assistantMessage: { role: "assistant", content },
-          toolCall: { id: "content_tool_call", name: tool, arguments: args as Record<string, unknown> },
+          toolCalls: [{ id: "content_tool_call", name: tool, arguments: args as Record<string, unknown> }],
         };
       }
     }
