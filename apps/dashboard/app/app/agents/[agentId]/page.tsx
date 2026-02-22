@@ -192,6 +192,7 @@ export default async function AgentPage({
   const sp = (await searchParams) ?? {};
   const githubBanner = typeof sp.github === "string" ? sp.github : undefined;
   const errorBanner = typeof sp.error === "string" ? sp.error : undefined;
+  const errorDetails = typeof sp.details === "string" ? sp.details : undefined;
 
   return (
     <div className="space-y-6">
@@ -209,11 +210,22 @@ export default async function AgentPage({
               {errorBanner === "github_unlink_failed" ? "GitHub unlink failed. Check the API logs for details." : null}
               {errorBanner === "github_update_failed" ? "GitHub update failed. Check the API logs for details." : null}
               {errorBanner === "github_remove_link_failed" ? "Removing that GitHub link failed. Check the API logs for details." : null}
-              {!["github_repo_required", "github_link_failed", "github_unlink_failed", "github_update_failed", "github_remove_link_failed"].includes(
+              {errorBanner === "agent_disable_failed" ? "Disable failed. Check the details below (and API logs)." : null}
+              {![
+                "github_repo_required",
+                "github_link_failed",
+                "github_unlink_failed",
+                "github_update_failed",
+                "github_remove_link_failed",
+                "agent_disable_failed",
+              ].includes(
                 errorBanner
               )
                 ? `Action failed: ${errorBanner}`
                 : null}
+              {errorBanner === "agent_disable_failed" && errorDetails ? (
+                <div className="mt-2 whitespace-pre-wrap font-mono text-xs opacity-80">{errorDetails}</div>
+              ) : null}
             </div>
           ) : (
             <div>
@@ -274,12 +286,14 @@ export default async function AgentPage({
               Install this agent in Slack so it can receive DMs and @mentions. It will be linked to the {agentResp.agent.name} bot.
             </p>
           </div>
-          <Link
+          <LoadingLink
             href={`/app/integrations/slack/connect?bot=${encodeURIComponent(botKey)}&agentId=${encodeURIComponent(agentIdParsed.data)}`}
+            prefetch={false}
             className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            pendingText="Opening Slack…"
           >
             {isLinked ? "Reinstall in Slack" : "Install in Slack"}
-          </Link>
+          </LoadingLink>
         </div>
       </div>
 

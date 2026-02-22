@@ -19,9 +19,17 @@ export async function POST(
     return NextResponse.redirect(new URL("/app/agents", process.env.NEXTAUTH_URL));
   }
 
-  await apiFetchForClient(clientId, `/agents/${agentIdParsed.data}`, {
-    method: "DELETE",
-  });
+  try {
+    await apiFetchForClient(clientId, `/agents/${agentIdParsed.data}`, {
+      method: "DELETE",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const target = new URL(`/app/agents/${agentIdParsed.data}`, process.env.NEXTAUTH_URL);
+    target.searchParams.set("error", "agent_disable_failed");
+    target.searchParams.set("details", msg.slice(0, 300));
+    return NextResponse.redirect(target);
+  }
 
   return NextResponse.redirect(new URL("/app/agents", process.env.NEXTAUTH_URL));
 }

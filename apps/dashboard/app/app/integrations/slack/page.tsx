@@ -88,6 +88,7 @@ export default async function SlackIntegrationPage() {
                       href={`/app/integrations/slack/connect?bot=${encodeURIComponent(
                         p.key
                       )}`}
+                      prefetch={false}
                       className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                     >
                       Install {p.name}

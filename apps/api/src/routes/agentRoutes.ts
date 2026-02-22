@@ -3,7 +3,11 @@ import { z } from "zod";
 import {
   ensureDefaultAgentForClient,
   createAgent,
+  countAgentsByPersonaKeyScoped,
+  deleteGitHubAgentConnectionScoped,
   deleteAgentScoped,
+  deleteSlackAgentLinksByAgentIdScoped,
+  deleteSlackInstallationsByClientIdAndBotKey,
   getAgentByIdScoped,
   listAgentsScoped,
   listAgentMemoriesByTypeScoped,
@@ -188,6 +192,34 @@ router.delete("/:agentId", requireInternalServiceAuth, async (req, res, next) =>
   try {
     const clientId = req.clientId!;
     const agentId = z.string().uuid().parse(req.params.agentId);
+
+    // Best-effort cleanup of integrations tied to this agent.
+    // Even though some tables cascade on agent deletion, we explicitly remove links first
+    // so "fired" agents don’t retain Slack/GitHub access in practice/UI.
+    const agent = await getAgentByIdScoped(clientId, agentId);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    await deleteGitHubAgentConnectionScoped({ clientId, agentId }).catch(() => undefined);
+    await deleteSlackAgentLinksByAgentIdScoped({ clientId, agentId }).catch(() => undefined);
+
+    // If this was a persona-backed agent, also disconnect the Slack installation for that persona
+    // unless another agent still uses the same persona key.
+    const personaKey = (agent as any).persona_key as string | null | undefined;
+    if (personaKey) {
+      const remaining = await countAgentsByPersonaKeyScoped({
+        clientId,
+        personaKey,
+        excludeAgentId: agentId,
+      }).catch(() => 0);
+      if (remaining === 0) {
+        await deleteSlackInstallationsByClientIdAndBotKey({ clientId, botKey: personaKey }).catch(
+          () => undefined
+        );
+      }
+    }
 
     await deleteAgentScoped({ clientId, agentId });
     res.status(204).send();

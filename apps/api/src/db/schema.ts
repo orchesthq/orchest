@@ -502,6 +502,50 @@ export async function getSlackInstallationByClientIdAndBotKey(input: {
   return rows[0] ?? null;
 }
 
+export async function deleteSlackInstallationsByClientIdAndBotKey(input: {
+  clientId: string;
+  botKey: string;
+}): Promise<number> {
+  assertUuid(input.clientId, "clientId");
+  const { rows } = await query<{ id: string }>(
+    "delete from slack_installations where client_id = $1 and bot_key = $2 returning id",
+    [input.clientId, input.botKey]
+  );
+  return rows.length;
+}
+
+export async function deleteSlackAgentLinksByAgentIdScoped(input: {
+  clientId: string;
+  agentId: string;
+}): Promise<number> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.agentId, "agentId");
+  const { rows } = await query<{ id: string }>(
+    "delete from slack_agent_links where client_id = $1 and agent_id = $2 returning id",
+    [input.clientId, input.agentId]
+  );
+  return rows.length;
+}
+
+export async function countAgentsByPersonaKeyScoped(input: {
+  clientId: string;
+  personaKey: string;
+  excludeAgentId?: string;
+}): Promise<number> {
+  assertUuid(input.clientId, "clientId");
+  if (input.excludeAgentId) assertUuid(input.excludeAgentId, "excludeAgentId");
+  const { rows } = await query<{ count: string }>(
+    [
+      "select count(*)::text as count",
+      "from agents",
+      "where client_id = $1 and persona_key = $2",
+      input.excludeAgentId ? "  and id <> $3" : "",
+    ].join("\n"),
+    input.excludeAgentId ? [input.clientId, input.personaKey, input.excludeAgentId] : [input.clientId, input.personaKey]
+  );
+  return Number(rows[0]?.count ?? "0") || 0;
+}
+
 export async function getSlackInstallationByTeamIdAndApiAppId(input: {
   teamId: string;
   apiAppId: string;
