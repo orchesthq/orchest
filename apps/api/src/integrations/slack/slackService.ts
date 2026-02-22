@@ -323,6 +323,48 @@ async function slackApi(token: string, method: string, payload: Record<string, a
   return json;
 }
 
+async function slackApiGet(token: string, method: string, params: Record<string, any>) {
+  const url = new URL(`https://slack.com/api/${method}`);
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) url.searchParams.set(k, v.join(","));
+    else url.searchParams.set(k, String(v));
+  }
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const reqId = res.headers.get("x-slack-req-id") ?? undefined;
+  const bodyText = await res.text();
+  let json: any;
+  try {
+    json = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    throw new Error(
+      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: non-JSON response: ${
+        bodyText ? bodyText.slice(0, 800) : "(empty)"
+      }`
+    );
+  }
+  if (!json?.ok) {
+    const err = String(json?.error ?? "unknown_error");
+    const detail = json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
+    const meta = json?.response_metadata ? ` response_metadata=${JSON.stringify(json.response_metadata)}` : "";
+    const needed = json?.needed ? ` needed=${String(json.needed)}` : "";
+    const provided = json?.provided ? ` provided=${String(json.provided)}` : "";
+    throw new Error(
+      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided} params=${JSON.stringify(
+        redactSlackPayload(params)
+      )}${meta}`
+    );
+  }
+  return json;
+}
+
 export async function enableAgentInSlack(input: {
   clientId: string;
   agentId: string;
@@ -746,7 +788,7 @@ async function createSlackCanvasFromMarkdown(input: {
 
   const tryFilesInfo = async (canvasId: string): Promise<{ canvasId: string; url?: string }> => {
     try {
-      const info = await slackApi(input.token, "files.info", { file: canvasId });
+      const info = await slackApiGet(input.token, "files.info", { file: canvasId });
       const url: string | undefined = info?.file?.permalink;
       return { canvasId, url };
     } catch (err) {
@@ -759,7 +801,7 @@ async function createSlackCanvasFromMarkdown(input: {
     // Fallback: construct a docs URL using the workspace URL from auth.test.
     // Slack canvas examples use: https://<workspace>.slack.com/docs/<TEAM_ID>/<CANVAS_ID>
     try {
-      const auth = await slackApi(input.token, "auth.test", {});
+      const auth = await slackApiGet(input.token, "auth.test", {});
       const baseUrl: string | undefined = auth?.url;
       const teamId: string | undefined = auth?.team_id;
       if (!baseUrl || !teamId) return undefined;
@@ -953,15 +995,19 @@ async function runTaskAndReply(input: {
               }
             }
 
-            const preview = result.summary.split("\n").slice(0, 12).join("\n") + "\n\n…";
-            await postSlackTextChunked({
-              token: input.installation.bot_access_token,
-              channel: input.channel,
-              threadTs: input.threadTs,
-              text: stripCanvasDisclaimers(preview),
-              username: input.agentLink.display_name,
-              iconUrl: input.agentLink.icon_url ?? undefined,
-            });
+            // Only post an extra preview message when the output is long.
+            // For short canvases, the link is enough (avoid duplicating content in chat).
+            if (isLong) {
+              const preview = result.summary.split("\n").slice(0, 12).join("\n") + "\n\n…";
+              await postSlackTextChunked({
+                token: input.installation.bot_access_token,
+                channel: input.channel,
+                threadTs: input.threadTs,
+                text: stripCanvasDisclaimers(preview),
+                username: input.agentLink.display_name,
+                iconUrl: input.agentLink.icon_url ?? undefined,
+              });
+            }
             return;
           }
 
