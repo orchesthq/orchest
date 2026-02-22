@@ -10,7 +10,9 @@ type GitHubStatus = {
   ownerLogin?: string;
 };
 
-export default async function GitHubIntegrationPage() {
+export default async function GitHubIntegrationPage(props: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getServerSession(authOptions);
   const clientId = getClientIdFromSession(session);
 
@@ -21,6 +23,11 @@ export default async function GitHubIntegrationPage() {
       </div>
     );
   }
+
+  const searchParams = (await props.searchParams) ?? {};
+  const error = typeof searchParams.error === "string" ? searchParams.error : null;
+  const github = typeof searchParams.github === "string" ? searchParams.github : null;
+  const returnTo = typeof searchParams.returnTo === "string" ? searchParams.returnTo : "";
 
   let status: GitHubStatus | null = null;
   try {
@@ -40,6 +47,57 @@ export default async function GitHubIntegrationPage() {
         </p>
       </div>
 
+      {error && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm">
+          <div className="font-medium">GitHub action failed</div>
+          <div className="mt-2 text-xs text-amber-900">
+            {error === "github_install_url_failed"
+              ? "Couldn’t start the GitHub connect flow. This usually means the GitHub App settings are missing or the private key format is invalid."
+              : error === "github_install_failed"
+                ? "GitHub connection failed while exchanging the installation for a token. Check the API logs (often private key formatting)."
+                : error === "github_no_installation_id"
+                  ? "GitHub did not redirect back with an installation id. This can happen if the app is already installed and GitHub takes you to settings instead."
+                  : error === "github_invalid_installation_id"
+                    ? "Installation id must be a positive number."
+                    : error === "github_session_expired"
+                      ? "Your connect session expired. Try connecting again."
+                      : error === "github_invalid_session"
+                        ? "Your connect session was invalid. Try connecting again."
+                        : error === "github_disconnect_failed"
+                          ? "Failed to disconnect. Check the API logs for details."
+                          : "Something went wrong. Check the API logs for details."}
+          </div>
+        </div>
+      )}
+
+      {github === "connected" && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-900 shadow-sm">
+          <div className="font-medium">GitHub connected</div>
+          <div className="mt-2 text-xs">
+            Your organization is now connected. Next, link individual agents to a repo from their agent pages.
+          </div>
+          {returnTo && returnTo !== "/app/integrations/github" && (
+            <div className="mt-3">
+              <Link
+                href={returnTo}
+                className="inline-flex items-center rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
+              >
+                Continue
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+
+      {github === "disconnected" && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-700 shadow-sm">
+          <div className="font-medium text-zinc-900">GitHub disconnected</div>
+          <div className="mt-2 text-xs text-zinc-600">
+            The organization link (and all per-agent GitHub links) were removed.
+          </div>
+        </div>
+      )}
+
       <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -57,7 +115,7 @@ export default async function GitHubIntegrationPage() {
           <div className="flex items-center gap-2">
             {status?.configured && !status?.connected && (
               <Link
-                href={`/app/integrations/github/connect?returnTo=${encodeURIComponent("/app/integrations/github")}`}
+                href={`/app/integrations/github/connect?returnTo=${encodeURIComponent(returnTo || "/app/integrations/github")}`}
                 className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
               >
                 Connect GitHub
@@ -65,7 +123,12 @@ export default async function GitHubIntegrationPage() {
             )}
 
             {status?.configured && status?.connected && (
-              <form action="/app/integrations/github/disconnect" method="post">
+              <form
+                action={`/app/integrations/github/disconnect?returnTo=${encodeURIComponent(
+                  returnTo || "/app/integrations/github"
+                )}`}
+                method="post"
+              >
                 <button
                   type="submit"
                   className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
@@ -82,6 +145,38 @@ export default async function GitHubIntegrationPage() {
           </p>
         )}
       </div>
+
+      {status?.configured && !status?.connected && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <div className="text-sm font-medium text-zinc-900">Already installed?</div>
+          <p className="mt-1 text-xs text-zinc-600">
+            If GitHub takes you to settings instead of redirecting back, you can manually link an existing installation by pasting its installation id
+            (from `github.com/settings/installations/&lt;id&gt;`).
+          </p>
+          <form action="/app/integrations/github/link-existing" method="post" className="mt-4 flex flex-wrap items-end gap-3">
+            <input type="hidden" name="returnTo" value={returnTo || ""} />
+            <div>
+              <label htmlFor="installationId" className="block text-xs font-medium text-zinc-500">
+                Installation id
+              </label>
+              <input
+                id="installationId"
+                name="installationId"
+                type="text"
+                inputMode="numeric"
+                placeholder="12345678"
+                className="mt-0.5 h-9 w-56 rounded-md border border-zinc-200 px-3 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Link installation
+            </button>
+          </form>
+        </div>
+      )}
 
       <p className="text-sm text-zinc-500">
         After connecting, go to each agent&apos;s page to link them to a specific repository and set access level (read / PR-only / direct push).

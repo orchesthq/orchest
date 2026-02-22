@@ -4,24 +4,29 @@ import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { getClientIdFromSession } from "@/lib/session";
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   const clientId = getClientIdFromSession(session);
   if (!clientId) {
     return NextResponse.redirect(new URL("/sign-in", process.env.NEXTAUTH_URL));
   }
 
+  const after =
+    new URL(req.url).searchParams.get("returnTo") ?? "/app/integrations/github";
+
   try {
     await apiFetchForClient(clientId, "/internal/github/disconnect", { method: "POST" });
   } catch (err) {
     console.error("[github] disconnect failed", err);
-    return NextResponse.redirect(
-      new URL("/app/integrations/github?error=github_disconnect_failed", process.env.NEXTAUTH_URL)
-    );
+    const target = new URL("/app/integrations/github", process.env.NEXTAUTH_URL);
+    target.searchParams.set("error", "github_disconnect_failed");
+    if (after) target.searchParams.set("returnTo", after);
+    return NextResponse.redirect(target);
   }
 
-  return NextResponse.redirect(
-    new URL("/app/integrations/github?github=disconnected", process.env.NEXTAUTH_URL)
-  );
+  const target = new URL("/app/integrations/github", process.env.NEXTAUTH_URL);
+  target.searchParams.set("github", "disconnected");
+  if (after) target.searchParams.set("returnTo", after);
+  return NextResponse.redirect(target);
 }
 

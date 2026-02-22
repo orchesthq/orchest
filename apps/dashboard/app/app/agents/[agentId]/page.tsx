@@ -257,10 +257,10 @@ export default async function AgentPage({
             </p>
           ) : !githubStatus?.connected ? (
             <Link
-              href={`/app/integrations/github/connect?returnTo=${encodeURIComponent(`/app/agents/${agentIdParsed.data}`)}`}
-              className="inline-flex w-fit items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              href={`/app/integrations/github?returnTo=${encodeURIComponent(`/app/agents/${agentIdParsed.data}`)}`}
+              className="inline-flex w-fit items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Connect GitHub
+              Go to GitHub integration
             </Link>
           ) : githubConnection ? (
             <div className="space-y-3">

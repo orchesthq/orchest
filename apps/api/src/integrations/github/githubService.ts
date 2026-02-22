@@ -51,6 +51,57 @@ function parseAppId(v: unknown): number | null {
   return null;
 }
 
+function normalizePrivateKey(raw: string): string {
+  let s = String(raw ?? "").trim();
+
+  // Common when pasting into SQL/JSON tooling: extra wrapping quotes.
+  if (
+    (s.startsWith('"') && s.endsWith('"') && s.length >= 2) ||
+    (s.startsWith("'") && s.endsWith("'") && s.length >= 2)
+  ) {
+    s = s.slice(1, -1);
+  }
+
+  // Normalize Windows newlines and common escape patterns.
+  // - actual newlines: \r\n -> \n
+  // - escaped: "\\n" or "\n" or "\\r\\n"
+  s = s
+    .replace(/\r\n/g, "\n")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .trim();
+
+  // If someone stored the PEM as a single line, re-wrap the base64 body.
+  const m = s.match(
+    /(-----BEGIN [^-]+-----)([\s\S]*?)(-----END [^-]+-----)/m
+  );
+  if (m) {
+    const header = m[1].trim();
+    const footer = m[3].trim();
+    const body = String(m[2] ?? "")
+      .replace(/[\r\n\s]+/g, "")
+      .trim();
+    if (body.length > 0) {
+      const wrapped = body.match(/.{1,64}/g)?.join("\n") ?? body;
+      s = `${header}\n${wrapped}\n${footer}\n`;
+    }
+  }
+
+  return s.trim();
+}
+
+function validatePrivateKeyOrThrow(privateKey: string): void {
+  try {
+    // If this throws, JWT signing will fail later anyway; surface early.
+    crypto.createPrivateKey({ key: privateKey, format: "pem" });
+  } catch {
+    throw new GitHubConfigError(
+      "GitHub App private key is invalid. Store the PEM in partner_settings(github/default).settings.privateKey using real newlines (recommended: SQL $$...$$), or store it with literal \\n sequences (not double-escaped)."
+    );
+  }
+}
+
 async function getGitHubAppConfigFromDb(): Promise<GitHubAppConfig | null> {
   const row = await getPartnerSetting({ partner: "github", key: "default" });
   if (!row) return null;
@@ -60,7 +111,7 @@ async function getGitHubAppConfigFromDb(): Promise<GitHubAppConfig | null> {
   if (!appId) return null;
   return {
     appId,
-    privateKey: String(parsed.data.privateKey).replace(/\\n/g, "\n"),
+    privateKey: normalizePrivateKey(parsed.data.privateKey),
     appSlug: parsed.data.appSlug,
   };
 }
@@ -91,6 +142,7 @@ async function requireGitHubAppConfig(): Promise<GitHubAppConfig> {
       "GitHub integration is not configured. Configure partner_settings(github/default)."
     );
   }
+  validatePrivateKeyOrThrow(cfg.privateKey);
   return cfg;
 }
 
@@ -100,6 +152,7 @@ async function requireGitHubAppConfig(): Promise<GitHubAppConfig> {
  */
 async function createAppJwt(): Promise<string> {
   const { appId, privateKey } = await requireGitHubAppConfig();
+  const keyObject = crypto.createPrivateKey({ key: privateKey, format: "pem" });
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iat: now - 60,
@@ -111,7 +164,7 @@ async function createAppJwt(): Promise<string> {
   const payloadB64 = base64(Buffer.from(JSON.stringify(payload)));
   const headerB64 = base64(Buffer.from(JSON.stringify(header)));
   const signatureInput = `${headerB64}.${payloadB64}`;
-  const sig = crypto.createSign("RSA-SHA256").update(signatureInput).sign(privateKey, "base64url");
+  const sig = crypto.createSign("RSA-SHA256").update(signatureInput).sign(keyObject, "base64url");
   return `${signatureInput}.${sig}`;
 }
 

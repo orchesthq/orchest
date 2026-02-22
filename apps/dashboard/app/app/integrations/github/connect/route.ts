@@ -15,13 +15,20 @@ export async function GET(req: Request) {
   }
 
   const returnTo =
-    new URL(req.url).searchParams.get("returnTo") ?? "/app/agents";
+    new URL(req.url).searchParams.get("returnTo") ?? "/app/integrations/github";
 
-  const { url } = await apiFetchForClient<{ url: string }>(
-    clientId,
-    "/internal/github/install-url",
-    { method: "GET" }
-  );
+  let url: string;
+  try {
+    const r = await apiFetchForClient<{ url: string }>(clientId, "/internal/github/install-url", {
+      method: "GET",
+    });
+    url = r.url;
+  } catch (err) {
+    console.error("[github] install-url failed", err);
+    return NextResponse.redirect(
+      new URL("/app/integrations/github?error=github_install_url_failed", process.env.NEXTAUTH_URL)
+    );
+  }
 
   const res = NextResponse.redirect(url);
   res.cookies.set(GITHUB_CONNECT_COOKIE, JSON.stringify({ clientId, returnTo }), {

@@ -177,9 +177,9 @@ Each agent can be linked to GitHub with its own commit identity (e.g. "Ava (Acme
 5. **Permissions:** Repository → Contents (Read and write), Pull requests (Read and write), Metadata (Read)
 6. Create the app, then under "About" note the **App ID** and **slug** (from the URL). Generate a **private key**.
 
-### 2) Set API env vars
+### 2) Store GitHub App settings in Postgres
 
-Store GitHub App configuration in Postgres (`partner_settings`) instead of env vars:
+Store GitHub App configuration in Postgres (`partner_settings`). Recommended: use `$$...$$` so the PEM keeps real newlines.
 
 ```sql
 insert into partner_settings (partner, key, settings)
@@ -189,7 +189,9 @@ values (
   jsonb_build_object(
     'appId', 123456,
     'appSlug', 'orchest-github',
-    'privateKey', '-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----'
+    'privateKey', $$-----BEGIN RSA PRIVATE KEY-----
+...
+-----END RSA PRIVATE KEY-----$$
   )
 )
 on conflict (partner, key) do update set settings = excluded.settings, updated_at = now();
