@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DEFAULT_ROLE_BY_PERSONA } from "@/lib/personas";
+import { InlineSpinner } from "@/components/InlineSpinner";
 
 type Agent = {
   id: string;
@@ -77,7 +78,13 @@ export function AgentCardActions({ personaKey, personaName, agent }: Props) {
           disabled={loading === "hire"}
           className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
         >
-          {loading === "hire" ? "Hiring…" : "Hire"}
+          {loading === "hire" ? (
+            <>
+              <InlineSpinner className="h-4 w-4 animate-spin" /> Hiring…
+            </>
+          ) : (
+            "Hire"
+          )}
         </button>
       ) : (
         <>
@@ -93,7 +100,13 @@ export function AgentCardActions({ personaKey, personaName, agent }: Props) {
             disabled={loading === "disable"}
             className="inline-flex items-center rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
           >
-            {loading === "disable" ? "Disabling…" : "Disable"}
+            {loading === "disable" ? (
+              <>
+                <InlineSpinner className="h-4 w-4 animate-spin" /> Disabling…
+              </>
+            ) : (
+              "Disable"
+            )}
           </button>
         </>
       )}

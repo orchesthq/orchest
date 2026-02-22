@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
+import { InlineSpinner } from "@/components/InlineSpinner";
 
 export function SignUpForm() {
   const [clientName, setClientName] = useState("");
@@ -87,9 +88,10 @@ export function SignUpForm() {
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
       >
-        {loading ? "Creating account..." : "Create account"}
+        {loading ? <InlineSpinner className="h-4 w-4 animate-spin" /> : null}
+        {loading ? "Creating account…" : "Create account"}
       </button>
     </form>
   );

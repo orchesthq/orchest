@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
+import { InlineSpinner } from "@/components/InlineSpinner";
 
 type Props = {
   agentId: string;
@@ -164,9 +165,10 @@ export function AgentEditor(props: Props) {
       <button
         type="submit"
         disabled={loading || !dirty}
-        className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
       >
-        {loading ? "Saving..." : "Save changes"}
+        {loading ? <InlineSpinner className="h-4 w-4 animate-spin" /> : null}
+        {loading ? "Saving…" : "Save changes"}
       </button>
     </form>
   );

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
+import { InlineSpinner } from "@/components/InlineSpinner";
 
 const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
   ava: "ai_software_engineer",
@@ -136,9 +137,10 @@ export function NewAgentForm() {
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
       >
-        {loading ? "Hiring..." : "Hire persona"}
+        {loading ? <InlineSpinner className="h-4 w-4 animate-spin" /> : null}
+        {loading ? "Hiring…" : "Hire persona"}
       </button>
     </form>
   );

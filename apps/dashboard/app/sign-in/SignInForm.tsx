@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { InlineSpinner } from "@/components/InlineSpinner";
 
 export function SignInForm() {
   const router = useRouter();
@@ -68,9 +69,10 @@ export function SignInForm() {
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
       >
-        {loading ? "Signing in..." : "Sign in"}
+        {loading ? <InlineSpinner className="h-4 w-4 animate-spin" /> : null}
+        {loading ? "Signing in…" : "Sign in"}
       </button>
     </form>
   );
