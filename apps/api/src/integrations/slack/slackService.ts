@@ -253,6 +253,41 @@ function timingSafeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aa, bb);
 }
 
+function redactSlackPayload(payload: Record<string, any>): Record<string, any> {
+  // Avoid logging large/private content. Keep only high-signal routing fields.
+  const allow = [
+    "channel",
+    "channel_id",
+    "thread_ts",
+    "ts",
+    "user",
+    "team_id",
+    "canvas_id",
+    "title",
+    "changes",
+    "document_content",
+    "file",
+  ];
+
+  const out: Record<string, any> = {};
+  for (const k of allow) {
+    if (!(k in payload)) continue;
+    const v = payload[k];
+    if (k === "changes" && Array.isArray(v)) {
+      out[k] = { count: v.length, operations: v.map((c: any) => c?.operation).filter(Boolean).slice(0, 10) };
+      continue;
+    }
+    if (k === "document_content" && v && typeof v === "object") {
+      const md = typeof v.markdown === "string" ? v.markdown : "";
+      out[k] = { type: v.type, markdown_length: md.length };
+      continue;
+    }
+    if (typeof v === "string" && v.length > 200) out[k] = v.slice(0, 200) + "…";
+    else out[k] = v;
+  }
+  return out;
+}
+
 async function slackApi(token: string, method: string, payload: Record<string, any>) {
   const res = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
@@ -262,9 +297,28 @@ async function slackApi(token: string, method: string, payload: Record<string, a
     },
     body: JSON.stringify(payload),
   });
-  const json = (await res.json()) as any;
+  const reqId = res.headers.get("x-slack-req-id") ?? undefined;
+  const bodyText = await res.text();
+  let json: any;
+  try {
+    json = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    throw new Error(
+      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: non-JSON response: ${
+        bodyText ? bodyText.slice(0, 800) : "(empty)"
+      }`
+    );
+  }
   if (!json?.ok) {
-    throw new Error(`Slack API ${method} failed: ${json?.error ?? "unknown_error"}`);
+    const err = String(json?.error ?? "unknown_error");
+    const detail = json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
+    const meta = json?.response_metadata ? ` response_metadata=${JSON.stringify(json.response_metadata)}` : "";
+    const needed = json?.needed ? ` needed=${String(json.needed)}` : "";
+    const provided = json?.provided ? ` provided=${String(json.provided)}` : "";
+    const payloadSummary = JSON.stringify(redactSlackPayload(payload));
+    throw new Error(
+      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided} payload=${payloadSummary}${meta}`
+    );
   }
   return json;
 }
@@ -575,22 +629,65 @@ async function createSlackCanvasFromMarkdown(input: {
   token: string;
   title: string;
   markdown: string;
+  channelId?: string;
 }): Promise<{ canvasId: string; url?: string }> {
+  const maxMarkdown = 95_000;
+  const markdown =
+    input.markdown.length > maxMarkdown ? input.markdown.slice(0, maxMarkdown) + "\n\n[truncated]" : input.markdown;
+  const doc = { type: "markdown", markdown };
+
+  const tryFilesInfo = async (canvasId: string): Promise<{ canvasId: string; url?: string }> => {
+    try {
+      const info = await slackApi(input.token, "files.info", { file: canvasId });
+      const url: string | undefined = info?.file?.permalink;
+      return { canvasId, url };
+    } catch {
+      return { canvasId };
+    }
+  };
+
+  // Prefer a conversation canvas (more reliable permissions model than standalone canvases for apps).
+  if (input.channelId) {
+    try {
+      const created = await slackApi(input.token, "conversations.canvases.create", {
+        channel_id: input.channelId,
+        title: input.title,
+        document_content: doc,
+      });
+      const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
+      if (canvasId) return await tryFilesInfo(canvasId);
+    } catch (err) {
+      // If a canvas already exists for this channel, update it in-place.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/channel_canvas_already_exists/i.test(msg)) {
+        const info = await slackApi(input.token, "conversations.info", { channel: input.channelId });
+        const existing: string | undefined =
+          info?.channel?.properties?.canvas?.file_id ??
+          info?.channel?.properties?.canvas?.id ??
+          info?.channel?.properties?.canvas ??
+          undefined;
+        if (existing) {
+          await slackApi(input.token, "canvases.edit", {
+            canvas_id: existing,
+            changes: [{ operation: "replace", document_content: doc }],
+          });
+          return await tryFilesInfo(existing);
+        }
+      }
+      // Fall through to standalone canvas attempt below.
+    }
+  }
+
   const created = await slackApi(input.token, "canvases.create", {
     title: input.title,
-    document_content: { type: "markdown", markdown: input.markdown },
+    document_content: doc,
+    // If we have a real channel id, attach it so access is inherited.
+    channel_id: input.channelId && /^[CG]/.test(input.channelId) ? input.channelId : undefined,
   });
 
   const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
   if (!canvasId) return { canvasId: "" };
-
-  try {
-    const info = await slackApi(input.token, "files.info", { file: canvasId });
-    const url: string | undefined = info?.file?.permalink;
-    return { canvasId, url };
-  } catch {
-    return { canvasId };
-  }
+  return await tryFilesInfo(canvasId);
 }
 
 async function runTaskAndReply(input: {
@@ -635,10 +732,11 @@ async function runTaskAndReply(input: {
         icon_url: input.agentLink.icon_url ?? undefined,
       });
     }
+    const italic = "_" + String(text).replace(/_/g, "\\_").trim() + "_";
     await slackApi(input.installation.bot_access_token, "chat.postMessage", {
       channel: input.channel,
       thread_ts: input.threadTs,
-      text,
+      text: italic,
       username: input.agentLink.display_name,
       icon_url: input.agentLink.icon_url ?? undefined,
     });
@@ -687,6 +785,7 @@ async function runTaskAndReply(input: {
             token: input.installation.bot_access_token,
             title,
             markdown: result.summary,
+            channelId: input.channel,
           });
 
           if (canvas.url) {
