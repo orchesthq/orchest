@@ -24,6 +24,7 @@ export type AgentExecutionResult = {
 
 export type RunAgentTaskOptions = {
   onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
+  onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
 };
 
 export async function runAgentTask(

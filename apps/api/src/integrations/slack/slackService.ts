@@ -480,6 +480,39 @@ function normalizeSlackText(text: string): string {
     .trim();
 }
 
+async function postSlackTextChunked(input: {
+  token: string;
+  channel: string;
+  threadTs?: string;
+  text: string;
+  username?: string;
+  iconUrl?: string;
+}) {
+  const maxLen = 3500;
+  const raw = String(input.text ?? "");
+  const chunks: string[] = [];
+  let remaining = raw;
+  while (remaining.length > maxLen) {
+    // Prefer splitting on paragraph boundaries.
+    let idx = remaining.lastIndexOf("\n\n", maxLen);
+    if (idx < 500) idx = remaining.lastIndexOf("\n", maxLen);
+    if (idx < 500) idx = maxLen;
+    chunks.push(remaining.slice(0, idx).trim());
+    remaining = remaining.slice(idx).trim();
+  }
+  if (remaining.trim()) chunks.push(remaining.trim());
+
+  for (const c of chunks) {
+    await slackApi(input.token, "chat.postMessage", {
+      channel: input.channel,
+      thread_ts: input.threadTs,
+      text: c,
+      username: input.username,
+      icon_url: input.iconUrl,
+    });
+  }
+}
+
 async function runTaskAndReply(input: {
   installation: SlackInstallationRow;
   agentLink: SlackAgentLinkRow;
@@ -522,22 +555,34 @@ async function runTaskAndReply(input: {
 
   void runAgentTask(task.id, {
     onPlanReady: async (plan) => {
+      await postSlackTextChunked({
+        token: input.installation.bot_access_token,
+        channel: input.channel,
+        threadTs: input.threadTs,
+        text: await formatPlanForUser(plan),
+        username: input.agentLink.display_name,
+        iconUrl: input.agentLink.icon_url ?? undefined,
+      });
+    },
+    onProgress: async (u) => {
+      if (!u.text) return;
       await slackApi(input.installation.bot_access_token, "chat.postMessage", {
         channel: input.channel,
         thread_ts: input.threadTs,
-        text: await formatPlanForUser(plan),
+        text: u.text,
         username: input.agentLink.display_name,
         icon_url: input.agentLink.icon_url ?? undefined,
       });
     },
   })
     .then(async (result) => {
-      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+      await postSlackTextChunked({
+        token: input.installation.bot_access_token,
         channel: input.channel,
-        thread_ts: input.threadTs,
+        threadTs: input.threadTs,
         text: result.summary,
         username: input.agentLink.display_name,
-        icon_url: input.agentLink.icon_url ?? undefined,
+        iconUrl: input.agentLink.icon_url ?? undefined,
       });
     })
     .catch(async (err) => {

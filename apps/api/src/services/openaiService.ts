@@ -396,6 +396,67 @@ export async function generateSlackPlanAck(input: {
   return input.plan.steps.length === 0 ? "On it." : `On it.\n\nPlan:\n${steps}`;
 }
 
+export async function finalizeAgentSlackResponse(input: {
+  agentName: string;
+  agentRole: string;
+  systemPrompt: string;
+  taskText: string;
+  executed: Array<{ step: string; result: string }>;
+  draft: string;
+  profileMemories: string[];
+}): Promise<string> {
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return input.draft;
+
+  const profileBlock =
+    input.profileMemories.length === 0
+      ? "No profile memories."
+      : input.profileMemories.slice(0, 10).map((m) => `- ${m}`).join("\n");
+
+  const executedBlock =
+    input.executed.length === 0
+      ? "No tools were executed."
+      : input.executed.slice(0, 50).map((e, i) => `${i + 1}. ${e.step}\n   - ${e.result}`).join("\n");
+
+  const system = [
+    input.systemPrompt,
+    "",
+    `You are ${input.agentName} (${input.agentRole}) replying in Slack.`,
+    "Write the actual deliverable content the user asked for.",
+    "Be honest: do NOT claim you reviewed code, accessed repos, or ran tools unless it appears in the executed tool log.",
+    "If no tools were executed, say you did not inspect the repo and provide a best-effort design based on the request.",
+    "No meta commentary like 'self-check' or 'the result meets the goal'. Just the deliverable.",
+  ].join("\n");
+
+  const user = [
+    "Task:",
+    input.taskText,
+    "",
+    "Profile memories:",
+    profileBlock,
+    "",
+    "Executed tool log (ground truth):",
+    executedBlock,
+    "",
+    "Draft answer (may be incomplete):",
+    input.draft,
+    "",
+    "Now write the final Slack response. Use headings and bullets if helpful.",
+  ].join("\n");
+
+  const json = await chatCompletionRaw(cfg, {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    temperature: 0.4,
+  });
+
+  const content = json?.choices?.[0]?.message?.content;
+  if (typeof content === "string" && content.trim()) return content.trim();
+  return input.draft;
+}
+
 function safeParseJson(text: string): unknown {
   // Handles models that wrap JSON in fences or extra prose.
   const stripped = text

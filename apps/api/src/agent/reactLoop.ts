@@ -1,7 +1,8 @@
 import { loadAgentMemories } from "./memoryService";
 import { addAgentMemoryScoped, completeTask, failTask, getTaskContextById, updateTaskStatus } from "../db/schema";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
-import { runReActLoop } from "./reactRunner";
+import { runReActLoop } from "./react_runner";
+import { finalizeAgentSlackResponse } from "../services/openaiService";
 
 export type AgentExecutionResult = {
   taskId: string;
@@ -12,6 +13,7 @@ export type AgentExecutionResult = {
 
 export type RunAgentTaskOptions = {
   onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
+  onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
 };
 
 export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOptions): Promise<AgentExecutionResult> {
@@ -41,18 +43,29 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       taskInput: ctx.task.input,
       memories,
       registry,
+      onProgress: options?.onProgress,
     });
 
-    await completeTask(taskId, final);
+    const finalized = await finalizeAgentSlackResponse({
+      agentName: ctx.agent.name,
+      agentRole: ctx.agent.role,
+      systemPrompt: ctx.agent.system_prompt,
+      taskText: ctx.task.input,
+      executed,
+      draft: final,
+      profileMemories: memories.filter((m) => m.memory_type === "profile").map((m) => m.content),
+    });
+
+    await completeTask(taskId, finalized);
 
     await addAgentMemoryScoped({
       clientId: ctx.client.id,
       agentId: ctx.agent.id,
       memoryType: "episodic",
-      content: `Completed task ${taskId}:\n${final}`,
+      content: `Completed task ${taskId}:\n${finalized}`,
     });
 
-    return { taskId, executed, summary: final };
+    return { taskId, executed, summary: finalized };
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
     try {

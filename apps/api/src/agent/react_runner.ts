@@ -11,6 +11,7 @@ type ReActOptions = {
   registry: ToolRegistry;
   maxIterations?: number;
   maxToolCalls?: number;
+  onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
 };
 
 type ExecutedStep = { step: string; result: string };
@@ -61,12 +62,8 @@ function readIntEnv(name: string, fallback: number): number {
 }
 
 export async function runReActLoop(input: ReActOptions): Promise<{ final: string; executed: ExecutedStep[] }> {
-  const maxIterations =
-    input.maxIterations ??
-    readIntEnv("ORCHEST_AGENT_MAX_ITERATIONS", 20);
-  const maxToolCalls =
-    input.maxToolCalls ??
-    readIntEnv("ORCHEST_AGENT_MAX_TOOL_CALLS", 30);
+  const maxIterations = input.maxIterations ?? readIntEnv("ORCHEST_AGENT_MAX_ITERATIONS", 20);
+  const maxToolCalls = input.maxToolCalls ?? readIntEnv("ORCHEST_AGENT_MAX_TOOL_CALLS", 30);
   const tools = input.registry.toOpenAiTools();
 
   const memoryBlock =
@@ -81,8 +78,8 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
     input.agentSystemPrompt,
     "",
     "You are an autonomous agent completing the user's task. Use tools when you need to inspect or change the linked GitHub repository.",
-    "If you have enough information, respond with a final user-facing summary.",
-    "Be concise but complete. Prefer safe, minimal changes.",
+    "When calling tools, include a short, user-safe status sentence in the assistant message (no hidden reasoning).",
+    "If you have enough information, respond with a final user-facing answer.",
   ].join("\n");
 
   const messages: Array<any> = [
@@ -95,84 +92,60 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   const executed: ExecutedStep[] = [];
   let toolCalls = 0;
   let didCritique = false;
+  let lastDraftFinal: string | null = null;
 
   for (let i = 0; i < maxIterations; i++) {
     const iterStart = Date.now();
-    const resp = await agentChatWithTools({
-      system,
-      messages,
-      tools,
-    });
+    const resp = await agentChatWithTools({ system, messages, tools });
 
     if (resp.type === "final") {
+      lastDraftFinal = resp.final;
       if (!didCritique) {
         didCritique = true;
         messages.push({ role: "assistant", content: resp.final });
         messages.push({
           role: "user",
           content: [
-            "## Self-check",
-            "Did the result fully meet the task goal?",
-            "- If anything is missing or incorrect, call the appropriate tool(s) to fix it.",
-            "- Otherwise, reply with the final answer (no tool calls).",
+            "Before you finalize, do a quick quality check.",
+            "If anything is missing or incorrect, call the appropriate tool(s) to fix it.",
+            "Otherwise, reply with the final answer. Do not mention that you performed a check.",
           ].join("\n"),
         });
         continue;
       }
-      console.log("[agent][react] done", {
-        taskId: input.taskId,
-        iterations: i + 1,
-        toolCalls,
-        ms: Date.now() - iterStart,
-      });
+      console.log("[agent][react] done", { taskId: input.taskId, iterations: i + 1, toolCalls, ms: Date.now() - iterStart });
       return { final: resp.final, executed };
     }
 
-    // Feed tool results back into the model.
     messages.push(resp.assistantMessage);
+
+    const statusText =
+      typeof (resp.assistantMessage as any)?.content === "string" ? String((resp.assistantMessage as any).content).trim() : "";
+    if (statusText && input.onProgress) {
+      const oneLine = statusText.replace(/\s+/g, " ").trim();
+      const clipped = oneLine.length > 140 ? oneLine.slice(0, 140) + "…" : oneLine;
+      await input.onProgress({ type: "status", text: clipped }).catch(() => {});
+    }
 
     const ctx = { taskId: input.taskId, clientId: input.clientId, agentId: input.agentId };
     for (const call of resp.toolCalls) {
       toolCalls++;
       if (toolCalls > maxToolCalls) {
-        return {
-          final: "Stopped: exceeded maximum tool calls while working on this task.",
-          executed,
-        };
+        return { final: "Stopped: exceeded maximum tool calls while working on this task.", executed };
       }
 
       const toolStart = Date.now();
-      const toolResult: ToolResult = await input.registry.execute({
-        ctx,
-        name: call.name,
-        args: call.arguments,
-      });
+      const toolResult: ToolResult = await input.registry.execute({ ctx, name: call.name, args: call.arguments });
       const toolMs = Date.now() - toolStart;
 
-      console.log("[agent][react] tool", {
-        taskId: input.taskId,
-        iteration: i + 1,
-        tool: call.name,
-        ok: toolResult.ok,
-        ms: toolMs,
-      });
+      console.log("[agent][react] tool", { taskId: input.taskId, iteration: i + 1, tool: call.name, ok: toolResult.ok, ms: toolMs });
 
-      executed.push({
-        step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`,
-        result: toolResult.message,
-      });
+      executed.push({ step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`, result: toolResult.message });
 
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: JSON.stringify(compactToolResultForModel(toolResult)),
-      });
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(compactToolResultForModel(toolResult)) });
     }
   }
 
-  return {
-    final: "Stopped: exceeded maximum iterations while working on this task.",
-    executed,
-  };
+  return { final: lastDraftFinal ?? "Stopped: exceeded maximum iterations while working on this task.", executed };
 }
 
