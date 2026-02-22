@@ -451,6 +451,23 @@ async function handleDirectMessage(input: {
   const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
   if (!agent) return;
 
+  const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
+    taskText
+  );
+
+  if (docLike) {
+    console.log("[slack] routing message to task flow (doc-like request)");
+    await runTaskAndReply({
+      installation: input.installation,
+      agentLink: link,
+      channel: input.channel,
+      threadTs: input.ts,
+      taskText,
+      forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
+    });
+    return;
+  }
+
   const conversational = await tryConversationalReply({
     agentName: agent.name,
     agentRole: agent.role,
@@ -459,6 +476,7 @@ async function handleDirectMessage(input: {
   });
 
   if (conversational.type === "chat") {
+    console.log("[slack] routing message to conversational reply");
     await slackApi(input.installation.bot_access_token, "chat.postMessage", {
       channel: input.channel,
       thread_ts: input.ts,
@@ -469,12 +487,14 @@ async function handleDirectMessage(input: {
     return;
   }
 
+  console.log("[slack] routing message to task flow");
   await runTaskAndReply({
     installation: input.installation,
     agentLink: link,
     channel: input.channel,
     threadTs: input.ts,
     taskText,
+    forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
   });
 }
 
@@ -506,6 +526,22 @@ async function handleAppMention(input: {
   const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
   if (!agent) return;
 
+  const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
+    cleaned
+  );
+  if (docLike) {
+    console.log("[slack] routing mention to task flow (doc-like request)");
+    await runTaskAndReply({
+      installation: input.installation,
+      agentLink: link,
+      channel: input.channel,
+      threadTs: input.ts,
+      taskText: cleaned,
+      forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
+    });
+    return;
+  }
+
   const conversational = await tryConversationalReply({
     agentName: agent.name,
     agentRole: agent.role,
@@ -514,6 +550,7 @@ async function handleAppMention(input: {
   });
 
   if (conversational.type === "chat") {
+    console.log("[slack] routing mention to conversational reply");
     await slackApi(input.installation.bot_access_token, "chat.postMessage", {
       channel: input.channel,
       thread_ts: input.ts,
@@ -524,12 +561,14 @@ async function handleAppMention(input: {
     return;
   }
 
+  console.log("[slack] routing mention to task flow");
   await runTaskAndReply({
     installation: input.installation,
     agentLink: link,
     channel: input.channel,
     threadTs: input.ts,
     taskText: cleaned,
+    forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
   });
 }
 
@@ -646,8 +685,10 @@ async function createSlackCanvasFromMarkdown(input: {
     }
   };
 
-  // Prefer a conversation canvas (more reliable permissions model than standalone canvases for apps).
-  if (input.channelId) {
+  const isChannel = Boolean(input.channelId && /^[CG]/.test(input.channelId));
+
+  // Prefer a conversation canvas for channels (more reliable permissions model than standalone canvases for apps).
+  if (input.channelId && isChannel) {
     try {
       const created = await slackApi(input.token, "conversations.canvases.create", {
         channel_id: input.channelId,
@@ -678,11 +719,16 @@ async function createSlackCanvasFromMarkdown(input: {
     }
   }
 
+  console.log("[slack] attempting standalone canvas create", {
+    titleLen: input.title.length,
+    markdownLen: doc.markdown.length,
+    channelIdPrefix: input.channelId?.slice(0, 1) ?? null,
+  });
   const created = await slackApi(input.token, "canvases.create", {
     title: input.title,
     document_content: doc,
     // If we have a real channel id, attach it so access is inherited.
-    channel_id: input.channelId && /^[CG]/.test(input.channelId) ? input.channelId : undefined,
+    channel_id: isChannel ? input.channelId : undefined,
   });
 
   const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
@@ -696,6 +742,7 @@ async function runTaskAndReply(input: {
   channel: string;
   threadTs: string;
   taskText: string;
+  forceCanvas?: boolean;
 }) {
   const agent = await getAgentByIdScoped(input.installation.client_id, input.agentLink.agent_id);
   if (!agent) return;
@@ -776,9 +823,11 @@ async function runTaskAndReply(input: {
     },
   })
     .then(async (result) => {
+      const wantsCanvas =
+        Boolean(input.forceCanvas) || /\b(canvas|canvases)\b/i.test(input.taskText) || /\bslack canvas\b/i.test(input.taskText);
       const isLong = result.summary.length > 2500 || result.summary.split("\n").length > 60;
 
-      if (isLong) {
+      if (wantsCanvas || isLong) {
         try {
           const title = input.taskText.trim().slice(0, 80) || `Task ${task.id.slice(0, 8)}`;
           const canvas = await createSlackCanvasFromMarkdown({

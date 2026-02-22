@@ -327,6 +327,9 @@ export async function tryConversationalReply(input: {
     "",
     "If the user's message is a greeting, quick question, small talk, or simple request for info, reply in 1–2 short sentences. No JSON, no code blocks.",
     'If it is a work request (code, docs, research, multi-step task), reply with exactly "__TASK__" and nothing else.',
+    'Treat any request to create or draft a document as a work request. Examples: "canvas", "doc", "PRD", "spec", "one-pager", "write-up", "notes", "Confluence", "Notion", "Google Doc".',
+    "If you're unsure, reply with __TASK__.",
+    "Never claim you lack Slack UI/API access. If the user asks for something you might need tooling for, reply __TASK__.",
   ].join("\n");
 
   const user = input.userMessage;
