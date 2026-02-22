@@ -854,6 +854,22 @@ function stripCanvasDisclaimers(markdown: string): string {
   return out.join("\n").trim();
 }
 
+function splitSlackConversationAndDocument(markdown: string): { conversation: string; document: string } {
+  const cleaned = stripCanvasDisclaimers(markdown);
+  const lines = cleaned.split(/\r?\n/);
+
+  // Document should start at the first markdown heading. Encourage agents to start docs with "# ..."
+  const headingIdx = lines.findIndex((l) => /^\s{0,3}#{1,6}\s+\S/.test(l));
+  if (headingIdx <= 0) {
+    // If there's no heading, treat everything as the document and keep conversation empty.
+    return { conversation: "", document: cleaned };
+  }
+
+  const convo = lines.slice(0, headingIdx).join("\n").trim();
+  const doc = lines.slice(headingIdx).join("\n").trim();
+  return { conversation: convo, document: doc || cleaned };
+}
+
 function slackMrkdwnFromMarkdown(text: string): string {
   let s = String(text ?? "");
   // Headings: "## Title" -> "*Title*"
@@ -1096,21 +1112,24 @@ async function runTaskAndReply(input: {
       if (wantsCanvas || isLong) {
         try {
           const title = deriveCanvasTitle({ taskText: input.taskText, agentName: agent.name });
-          const canvasMarkdown = stripCanvasDisclaimers(result.summary);
+          const { conversation, document } = splitSlackConversationAndDocument(result.summary);
           const canvas = await createSlackCanvasFromMarkdown({
             token: input.installation.bot_access_token,
             title,
-            markdown: canvasMarkdown,
+            markdown: document,
             channelId: input.channel,
             requestUserId: input.requestUserId,
           });
 
           if (canvas.canvasId && canvas.url) {
-            // Share link in-thread first (Slack doc: required before canvases.access.set with user_ids).
+            const intro = conversation.trim();
+            const linkLine = `I’ve put the full details in this document: <${canvas.url}|open canvas>.`;
+
+            // Share in-thread: conversational intro + link.
             await slackApi(input.installation.bot_access_token, "chat.postMessage", {
               channel: input.channel,
               thread_ts: input.threadTs,
-              text: `I put this in a Canvas: <${canvas.url}|open canvas>.`,
+              text: intro ? `${intro}\n\n${linkLine}` : linkLine,
               username: input.agentLink.display_name,
               icon_url: input.agentLink.icon_url ?? undefined,
             });
@@ -1130,19 +1149,7 @@ async function runTaskAndReply(input: {
               }
             }
 
-            // Only post an extra preview message when the output is long.
-            // For short canvases, the link is enough (avoid duplicating content in chat).
-            if (isLong) {
-              const preview = result.summary.split("\n").slice(0, 12).join("\n") + "\n\n…";
-              await postSlackTextChunked({
-                token: input.installation.bot_access_token,
-                channel: input.channel,
-                threadTs: input.threadTs,
-                text: stripCanvasDisclaimers(preview),
-                username: input.agentLink.display_name,
-                iconUrl: input.agentLink.icon_url ?? undefined,
-              });
-            }
+            // Don't paste document excerpts into chat; keep Slack conversational and the Canvas as reference.
             return;
           }
 
