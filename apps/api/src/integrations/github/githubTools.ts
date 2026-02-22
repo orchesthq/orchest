@@ -5,7 +5,10 @@ import {
   createRef,
   createTree,
   getCommit,
+  getFileContent,
   getRef,
+  getTree,
+  searchCode,
   updateRef,
 } from "./githubApi";
 import { getAgentGitHubConnection, getValidInstallationToken } from "./githubService";
@@ -178,5 +181,95 @@ export async function open_pull_request(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, message: `Failed to open PR: ${msg}` };
+  }
+}
+
+export async function github_read_file(
+  input: { repo: string; path: string; ref?: string },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null);
+  if (!creds) {
+    return { ok: false, message: noAccessMessage() };
+  }
+  const repo = input.repo || creds.repo;
+  if (repo !== creds.repo) {
+    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
+  }
+
+  try {
+    const ref = input.ref?.trim() || creds.defaultBranch;
+    const content = await getFileContent(creds.token, repo, input.path, ref);
+    const truncated = content.length > 40_000 ? content.slice(0, 40_000) + "\n\n[truncated]" : content;
+    return {
+      ok: true,
+      message: `Read ${input.path} at ${ref} (${content.length} chars).`,
+      metadata: { path: input.path, ref, content: truncated },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to read file: ${msg}` };
+  }
+}
+
+export async function github_list_tree(
+  input: { repo: string; ref?: string; pathPrefix?: string; recursive?: boolean },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null);
+  if (!creds) {
+    return { ok: false, message: noAccessMessage() };
+  }
+  const repo = input.repo || creds.repo;
+  if (repo !== creds.repo) {
+    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
+  }
+
+  try {
+    const ref = input.ref?.trim() || creds.defaultBranch;
+    const baseRef = await getRef(creds.token, repo, ref);
+    const commitSha = baseRef.object.sha;
+    const commit = await getCommit(creds.token, repo, commitSha);
+    const treeSha = commit.tree.sha;
+    const tree = await getTree(creds.token, repo, treeSha, Boolean(input.recursive ?? true));
+    const prefix = (input.pathPrefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
+    const items = tree.tree
+      .filter((t) => (prefix ? String(t.path ?? "").startsWith(prefix + "/") || String(t.path ?? "") === prefix : true))
+      .slice(0, 500)
+      .map((t) => ({ path: t.path, type: t.type, sha: t.sha, size: (t as any).size }));
+    return {
+      ok: true,
+      message: `Listed ${items.length} entries at ${ref}${prefix ? ` under ${prefix}/` : ""}.`,
+      metadata: { ref, pathPrefix: prefix || null, items },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to list tree: ${msg}` };
+  }
+}
+
+export async function github_search_code(
+  input: { repo: string; query: string },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null);
+  if (!creds) {
+    return { ok: false, message: noAccessMessage() };
+  }
+  const repo = input.repo || creds.repo;
+  if (repo !== creds.repo) {
+    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
+  }
+
+  try {
+    const results = await searchCode(creds.token, repo, input.query);
+    return {
+      ok: true,
+      message: `Search returned ${results.length} results.`,
+      metadata: { query: input.query, results },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to search code: ${msg}` };
   }
 }

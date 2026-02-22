@@ -8,11 +8,8 @@ import {
 import { loadAgentMemories } from "./memoryService";
 import { createPlan } from "./planningService";
 import { summarizeResults } from "../services/openaiService";
-import {
-  create_branch,
-  create_file_and_commit,
-  open_pull_request,
-} from "../integrations/github/githubTools";
+import { createDefaultToolRegistry } from "./tools/defaultRegistry";
+import { runAgentTaskReAct } from "./reactLoop";
 
 // Core agent loop (plan → execute → summarize).
 // Production intent:
@@ -20,7 +17,7 @@ import {
 // - Execution is currently simulated; the “tool router” is the extension point for real GitHub/tool calls.
 export type AgentExecutionResult = {
   taskId: string;
-  plan: { steps: string[]; notes?: string };
+  plan?: { steps: string[]; actions: Array<{ tool: string; arguments: Record<string, unknown> }>; notes?: string };
   executed: Array<{ step: string; result: string }>;
   summary: string;
 };
@@ -30,6 +27,17 @@ export type RunAgentTaskOptions = {
 };
 
 export async function runAgentTask(
+  taskId: string,
+  options?: RunAgentTaskOptions
+): Promise<AgentExecutionResult> {
+  const engine = (process.env.ORCHEST_AGENT_ENGINE ?? "legacy").toLowerCase();
+  if (engine === "react") {
+    return await runAgentTaskReAct(taskId, options);
+  }
+  return await runAgentTaskLegacy(taskId, options);
+}
+
+async function runAgentTaskLegacy(
   taskId: string,
   options?: RunAgentTaskOptions
 ): Promise<AgentExecutionResult> {
@@ -44,6 +52,7 @@ export async function runAgentTask(
       limit: 50,
     });
 
+    const registry = createDefaultToolRegistry();
     const plan = await createPlan({
       task: ctx.task,
       agent: ctx.agent,
@@ -55,10 +64,16 @@ export async function runAgentTask(
     }
 
     const executed: Array<{ step: string; result: string }> = [];
-    const githubCtx = { clientId: ctx.client.id, agentId: ctx.agent.id };
-    for (const step of plan.steps) {
-      const result = await executeStep(step, { taskId }, githubCtx);
-      executed.push({ step, result });
+    for (const action of plan.actions) {
+      const r = await registry.execute({
+        ctx: { taskId, clientId: ctx.client.id, agentId: ctx.agent.id },
+        name: action.tool,
+        args: action.arguments,
+      });
+      executed.push({
+        step: `${action.tool}(${safeJson(action.arguments)})`,
+        result: r.message,
+      });
     }
 
     const summary = await summarizeResults({
@@ -90,73 +105,11 @@ export async function runAgentTask(
   }
 }
 
-async function executeStep(
-  step: string,
-  ctx: { taskId: string },
-  githubCtx: { clientId: string; agentId: string }
-): Promise<string> {
-  const normalized = step.toLowerCase();
-  const branch = `task-${ctx.taskId.slice(0, 8)}`;
-
-  if (
-    normalized.includes("create_branch") ||
-    normalized.includes("create branch") ||
-    normalized.includes("new branch")
-  ) {
-    const r = await create_branch(
-      { repo: "", base: "main", branch },
-      githubCtx
-    );
-    return r.ok ? r.message : r.message;
+function safeJson(v: unknown): string {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return "[unserializable]";
   }
-
-  if (
-    normalized.includes("create_file_and_commit") ||
-    normalized.includes("create file and commit") ||
-    (normalized.includes("add") && (normalized.includes("file") || normalized.includes("content"))) ||
-    normalized.includes("create file") ||
-    normalized.includes("write file") ||
-    normalized.includes("hello-world") ||
-    normalized.includes("hello world")
-  ) {
-    const branchRes = await create_branch(
-      { repo: "", base: "main", branch },
-      githubCtx
-    );
-    if (!branchRes.ok) return branchRes.message;
-
-    const r = await create_file_and_commit(
-      {
-        repo: "",
-        branch,
-        path: "hello-world.txt",
-        content: "Hello, World!",
-        message: "Add hello-world file",
-      },
-      githubCtx
-    );
-    return r.ok ? r.message : r.message;
-  }
-
-  if (
-    normalized.includes("pull request") ||
-    normalized.includes("open_pull_request") ||
-    normalized.includes("open pr") ||
-    (normalized.includes("pr") && (normalized.includes("open") || normalized.includes("create")))
-  ) {
-    const r = await open_pull_request(
-      {
-        repo: "",
-        branch,
-        base: "main",
-        title: `Task ${ctx.taskId}`,
-        body: "",
-      },
-      githubCtx
-    );
-    return r.ok ? r.message : r.message;
-  }
-
-  return `Not executed: no tool matched this step. The agent can create branches, add files (create_file_and_commit), and open PRs when linked to GitHub with a repository.`;
 }
 

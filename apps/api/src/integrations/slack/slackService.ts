@@ -4,6 +4,7 @@ import {
   consumeSlackOauthState,
   createSlackOauthState,
   getAgentByIdScoped,
+  listAgentMemoriesByTypeScoped,
   getSlackAgentLinkByDmChannelId,
   getSlackAgentLinkByTeamAndBotKey,
   getSlackInstallationByClientIdAndBotKey,
@@ -16,7 +17,7 @@ import {
 } from "../../db/schema";
 import { createTaskForAgentScoped } from "../../db/schema";
 import { runAgentTask } from "../../agent/agentLoop";
-import { tryConversationalReply } from "../../services/openaiService";
+import { generateSlackPlanAck, tryConversationalReply } from "../../services/openaiService";
 import { isDbConfigured } from "../../db/client";
 
 export class SlackConfigError extends Error {
@@ -489,16 +490,34 @@ async function runTaskAndReply(input: {
   const agent = await getAgentByIdScoped(input.installation.client_id, input.agentLink.agent_id);
   if (!agent) return;
 
+  const profileMemories = await listAgentMemoriesByTypeScoped({
+    clientId: input.installation.client_id,
+    agentId: agent.id,
+    memoryType: "profile",
+    limit: 10,
+  }).catch(() => []);
+
   const task = await createTaskForAgentScoped({
     clientId: input.installation.client_id,
     agentId: agent.id,
     taskInput: input.taskText,
   });
 
-  const formatPlanForUser = (plan: { steps: string[]; notes?: string }): string => {
-    if (plan.steps.length === 0) return "Got it — I'm on it.";
+  const formatPlanForUser = async (plan: { steps: string[]; notes?: string }): Promise<string> => {
+    const ack = await generateSlackPlanAck({
+      agentName: agent.name,
+      agentRole: agent.role,
+      systemPrompt: agent.system_prompt,
+      taskText: input.taskText,
+      plan,
+      profileMemories: profileMemories.map((m) => m.content),
+    }).catch(() => null);
+    if (ack) return ack;
+
+    // Fallback only if LLM call fails.
+    if (plan.steps.length === 0) return "On it.";
     const steps = plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-    return `Got it — I'm on it.\n\nI'll:\n${steps}`;
+    return `On it.\n\nPlan:\n${steps}`;
   };
 
   void runAgentTask(task.id, {
@@ -506,7 +525,7 @@ async function runTaskAndReply(input: {
       await slackApi(input.installation.bot_access_token, "chat.postMessage", {
         channel: input.channel,
         thread_ts: input.threadTs,
-        text: formatPlanForUser(plan),
+        text: await formatPlanForUser(plan),
         username: input.agentLink.display_name,
         icon_url: input.agentLink.icon_url ?? undefined,
       });

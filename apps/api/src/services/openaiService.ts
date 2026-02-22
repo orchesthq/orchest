@@ -9,6 +9,7 @@ export type MemoryForPrompt = {
 
 export type PlanOutput = {
   steps: string[];
+  actions: Array<{ tool: string; arguments: Record<string, unknown> }>;
   notes?: string;
 };
 
@@ -19,6 +20,14 @@ export type ConversationalResult =
 
 const planSchema = z.object({
   steps: z.array(z.string().min(1)).min(1),
+  actions: z
+    .array(
+      z.object({
+        tool: z.string().min(1),
+        arguments: z.record(z.unknown()),
+      })
+    )
+    .min(1),
   notes: z.string().optional(),
 });
 
@@ -85,7 +94,19 @@ async function getOpenAiConfig(): Promise<OpenAiConfig | null> {
   return config;
 }
 
-async function chatCompletion(cfg: OpenAiConfig, input: { system: string; user: string }): Promise<string> {
+type OpenAiChatMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: string }
+  | { role: "assistant"; content?: string | null; tool_calls?: OpenAiToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+type OpenAiToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+async function chatCompletionRaw(cfg: OpenAiConfig, body: any): Promise<any> {
   const url = `${cfg.baseUrl}/chat/completions`;
   const res = await fetch(url, {
     method: "POST",
@@ -93,14 +114,7 @@ async function chatCompletion(cfg: OpenAiConfig, input: { system: string; user: 
       Authorization: `Bearer ${cfg.apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages: [
-        { role: "system", content: input.system },
-        { role: "user", content: input.user },
-      ],
-      temperature: 0.2,
-    }),
+    body: JSON.stringify({ model: cfg.model, temperature: 0.2, ...body }),
   });
 
   if (!res.ok) {
@@ -108,7 +122,16 @@ async function chatCompletion(cfg: OpenAiConfig, input: { system: string; user: 
     throw new Error(`OpenAI-compatible API error: ${res.status} ${res.statusText} ${body}`);
   }
 
-  const json = (await res.json()) as any;
+  return (await res.json()) as any;
+}
+
+async function chatCompletion(cfg: OpenAiConfig, input: { system: string; user: string }): Promise<string> {
+  const json = await chatCompletionRaw(cfg, {
+    messages: [
+      { role: "system", content: input.system },
+      { role: "user", content: input.user },
+    ],
+  });
   const content = json?.choices?.[0]?.message?.content;
   if (!content || typeof content !== "string") throw new Error("Invalid LLM response shape");
   return content;
@@ -125,6 +148,15 @@ function deterministicMockPlan(taskInput: string): PlanOutput {
       "Implement the change with clean types and client-safe data access",
       "Add or update tests/sanity checks if applicable",
       "Summarize the outcome and any follow-ups",
+    ],
+    actions: [
+      {
+        tool: "noop",
+        arguments: {
+          reason:
+            "LLM is not configured; configure partner_settings(openai/default) to enable real execution.",
+        },
+      },
     ],
     notes:
       "Mock plan generated because OpenAI settings are not configured. Set partner_settings(openai/default) to enable real planning.",
@@ -150,6 +182,7 @@ export async function planTask(input: {
   taskInput: string;
   agentSystemPrompt: string;
   memories: MemoryForPrompt[];
+  availableTools: Array<{ name: string; description: string }>;
 }): Promise<PlanOutput> {
   const cfg = await getOpenAiConfig();
   if (!cfg) return deterministicMockPlan(input.taskInput);
@@ -162,37 +195,78 @@ export async function planTask(input: {
           .map((m) => `- [${m.memory_type}] ${m.content}`)
           .join("\n");
 
-  const toolDescriptions = [
-    "## Available tools (use ONLY these – no local machine, no clone)",
-    "- create_branch: Create a new branch from main via GitHub API",
-    "- create_file_and_commit: Add or modify a file and commit directly to GitHub (no clone – API does it)",
-    "- open_pull_request: Open a PR from the branch to main",
-    "",
-    "You work entirely via GitHub REST API. There is NO localhost, NO clone, NO local git. Commits go directly to the remote. Do NOT output steps like 'clone', 'access repo', 'stage', 'push' – they are not supported.",
-  ].join("\n");
+  const toolDescriptions = input.availableTools.map((t) => `- ${t.name}: ${t.description}`).join("\n");
 
   const system = [
     input.agentSystemPrompt,
     "",
-    "You are planning work for the next task. Return ONLY valid JSON.",
-    'JSON schema: {"steps": string[], "notes"?: string}',
-    "",
-    toolDescriptions,
+    "Plan the next task. Use only the tools provided.",
+    "Call orchest_plan exactly once with a short step list and a structured tool-action list.",
   ].join("\n");
 
   const user = [
-    "## Task",
-    input.taskInput,
+    `Task: ${input.taskInput}`,
     "",
-    "## Relevant memories",
+    "Relevant memories:",
     memoryBlock,
     "",
-    "Create a concise plan. Each step must match a tool: create_branch, create_file_and_commit (for adding/modifying files), or open_pull_request. Use phrases like 'create branch', 'add file X', 'create file X', 'open pull request'.",
+    "Available tools:",
+    toolDescriptions || "(none)",
+    "",
+    "Each action.tool must be an available tool name.",
   ].join("\n");
 
-  const content = await chatCompletion(cfg, { system, user });
-  const maybeJson = safeParseJson(content);
-  const parsed = planSchema.safeParse(maybeJson);
+  const tools = [
+    {
+      type: "function",
+      function: {
+        name: "orchest_plan",
+        description: "Return a plan with steps and structured tool actions to execute.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            steps: { type: "array", items: { type: "string" } },
+            actions: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  tool: { type: "string" },
+                  arguments: { type: "object" },
+                },
+                required: ["tool", "arguments"],
+              },
+            },
+            notes: { type: "string" },
+          },
+          required: ["steps", "actions"],
+        },
+      },
+    },
+  ];
+
+  const json = await chatCompletionRaw(cfg, {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    tools,
+    tool_choice: { type: "function", function: { name: "orchest_plan" } },
+  });
+
+  const toolCall = (json?.choices?.[0]?.message?.tool_calls?.[0] ??
+    null) as OpenAiToolCall | null;
+  if (toolCall?.type === "function" && toolCall.function?.name === "orchest_plan") {
+    const args = safeParseJson(toolCall.function.arguments);
+    const parsed = planSchema.safeParse(args);
+    if (parsed.success) return parsed.data;
+  }
+
+  // Fallback: if tool calling isn't supported, accept JSON in content.
+  const content = json?.choices?.[0]?.message?.content;
+  const parsed = planSchema.safeParse(safeParseJson(typeof content === "string" ? content : ""));
   if (!parsed.success) return deterministicMockPlan(input.taskInput);
   return parsed.data;
 }
@@ -265,6 +339,63 @@ export async function tryConversationalReply(input: {
   return { type: "chat", reply: trimmed };
 }
 
+export async function generateSlackPlanAck(input: {
+  agentName: string;
+  agentRole: string;
+  systemPrompt: string;
+  taskText: string;
+  plan: { steps: string[]; notes?: string };
+  profileMemories: string[];
+}): Promise<string> {
+  const cfg = await getOpenAiConfig();
+  if (!cfg) {
+    if (input.plan.steps.length === 0) return "On it.";
+    const steps = input.plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+    return `On it.\n\nPlan:\n${steps}`;
+  }
+
+  const profileBlock =
+    input.profileMemories.length === 0
+      ? "No profile memories."
+      : input.profileMemories.slice(0, 10).map((m) => `- ${m}`).join("\n");
+
+  const system = [
+    input.systemPrompt,
+    "",
+    `You are ${input.agentName} (${input.agentRole}) replying in Slack.`,
+    "Write a natural, human acknowledgement that you’re starting the task.",
+    "Use the agent’s profile memories to shape voice and phrasing. Do not be robotic.",
+    "Keep it short: 1–2 sentences, then (if steps are provided) a numbered plan list.",
+    "No JSON, no code fences.",
+  ].join("\n");
+
+  const steps =
+    input.plan.steps.length === 0 ? "(no steps)" : input.plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+
+  const user = [
+    "Task:",
+    input.taskText,
+    "",
+    "Profile memories:",
+    profileBlock,
+    "",
+    "Plan steps:",
+    steps,
+  ].join("\n");
+
+  const json = await chatCompletionRaw(cfg, {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    temperature: 0.5,
+  });
+
+  const content = json?.choices?.[0]?.message?.content;
+  if (typeof content === "string" && content.trim()) return content.trim();
+  return input.plan.steps.length === 0 ? "On it." : `On it.\n\nPlan:\n${steps}`;
+}
+
 function safeParseJson(text: string): unknown {
   // Handles models that wrap JSON in fences or extra prose.
   const stripped = text
@@ -279,5 +410,67 @@ function safeParseJson(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+export type AgentToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export async function agentChatWithTools(input: {
+  system: string;
+  messages: Array<Omit<OpenAiChatMessage, "role"> & { role: "user" | "assistant" | "tool" }>;
+  tools: Array<{ type: "function"; function: { name: string; description: string; parameters: any } }>;
+}): Promise<
+  | { type: "final"; final: string }
+  | { type: "tool"; assistantMessage: OpenAiChatMessage; toolCall: AgentToolCall }
+> {
+  const cfg = await getOpenAiConfig();
+  if (!cfg) {
+    return { type: "final", final: "LLM is not configured. Configure partner_settings(openai/default) to enable agent execution." };
+  }
+
+  const json = await chatCompletionRaw(cfg, {
+    messages: [{ role: "system", content: input.system }, ...input.messages],
+    tools: input.tools,
+    tool_choice: "auto",
+  });
+
+  const msg = (json?.choices?.[0]?.message ?? null) as OpenAiChatMessage | null;
+  const toolCalls = (msg as any)?.tool_calls as OpenAiToolCall[] | undefined;
+  if (msg && Array.isArray(toolCalls) && toolCalls.length > 0) {
+    const tc = toolCalls[0]!;
+    const parsedArgs = safeParseJson(tc.function?.arguments ?? "");
+    const argsObj =
+      parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)
+        ? (parsedArgs as Record<string, unknown>)
+        : {};
+    return {
+      type: "tool",
+      assistantMessage: { role: "assistant", content: msg.content ?? null, tool_calls: toolCalls },
+      toolCall: { id: tc.id, name: tc.function.name, arguments: argsObj },
+    };
+  }
+
+  const content = (msg as any)?.content;
+  if (typeof content === "string" && content.trim().length > 0) {
+    // Fallback: allow JSON tool call in content if tool calling isn't supported.
+    const maybe = safeParseJson(content);
+    if (maybe && typeof maybe === "object" && !Array.isArray(maybe)) {
+      const tool = (maybe as any).tool;
+      const args = (maybe as any).arguments;
+      if (typeof tool === "string" && args && typeof args === "object" && !Array.isArray(args)) {
+        return {
+          type: "tool",
+          assistantMessage: { role: "assistant", content },
+          toolCall: { id: "content_tool_call", name: tool, arguments: args as Record<string, unknown> },
+        };
+      }
+    }
+    return { type: "final", final: content.trim() };
+  }
+
+  return { type: "final", final: "No response from model." };
 }
 

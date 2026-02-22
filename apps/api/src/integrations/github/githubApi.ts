@@ -135,3 +135,53 @@ export async function createPullRequest(
   });
   return r as { html_url: string; number: number };
 }
+
+export async function getFileContent(token: string, repo: string, path: string, ref?: string): Promise<string> {
+  const [owner, name] = repo.split("/");
+  const qp = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const r = (await githubApi(
+    token,
+    "GET",
+    `/repos/${owner}/${name}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}${qp}`
+  )) as any;
+
+  // GitHub returns either an object for a file or an array for a directory.
+  if (!r || Array.isArray(r)) {
+    throw new Error(`Path is not a file: ${path}`);
+  }
+  const encoding = String(r.encoding ?? "");
+  const content = String(r.content ?? "");
+  if (encoding !== "base64") {
+    throw new Error(`Unsupported content encoding: ${encoding || "unknown"}`);
+  }
+  // GitHub may include newlines in base64 content.
+  const b64 = content.replace(/\s+/g, "");
+  return Buffer.from(b64, "base64").toString("utf8");
+}
+
+export async function getTree(
+  token: string,
+  repo: string,
+  treeSha: string,
+  recursive = false
+): Promise<{ tree: Array<{ path: string; type: string; sha: string; size?: number }> }> {
+  const [owner, name] = repo.split("/");
+  const qp = recursive ? "?recursive=1" : "";
+  const r = await githubApi(token, "GET", `/repos/${owner}/${name}/git/trees/${treeSha}${qp}`);
+  return r as { tree: Array<{ path: string; type: string; sha: string; size?: number }> };
+}
+
+export async function searchCode(
+  token: string,
+  repo: string,
+  query: string
+): Promise<Array<{ path: string; sha: string; score: number }>> {
+  const q = `${query} repo:${repo}`;
+  const r = (await githubApi(token, "GET", `/search/code?q=${encodeURIComponent(q)}&per_page=20`)) as any;
+  const items: any[] = Array.isArray(r?.items) ? r.items : [];
+  return items.map((i) => ({
+    path: String(i.path ?? ""),
+    sha: String(i.sha ?? ""),
+    score: Number(i.score ?? 0),
+  }));
+}
