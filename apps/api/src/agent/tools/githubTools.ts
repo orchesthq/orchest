@@ -4,6 +4,7 @@ import {
   create_branch,
   create_file_and_commit,
   github_apply_patch,
+  github_find_in_file,
   github_list_changed_files,
   github_list_tree,
   github_read_file_chunk,
@@ -29,7 +30,7 @@ export function registerGitHubTools(registry: ToolRegistry): void {
   registry.register({
     name: "create_file_and_commit",
     description:
-      "Create or overwrite a file in the linked repo on a given branch and commit the change.",
+      "Create a NEW file in the linked repo on a given branch and commit the change (refuses overwrites).",
     inputSchema: z.object({
       repo: z.string().default(""),
       branch: z.string().min(1),
@@ -83,6 +84,24 @@ export function registerGitHubTools(registry: ToolRegistry): void {
     }),
     execute: async (ctx: ToolContext, args) => {
       return await github_read_file_chunk(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+    },
+  });
+
+  registry.register({
+    name: "github_find_in_file",
+    description:
+      "Search within a single file in the linked repo and return matching line windows and byte offsets.",
+    inputSchema: z.object({
+      repo: z.string().default(""),
+      path: z.string().min(1),
+      ref: z.string().optional(),
+      needle: z.string().min(1),
+      caseInsensitive: z.boolean().optional(),
+      contextLines: z.number().int().nonnegative().max(50).optional(),
+      maxMatches: z.number().int().positive().max(50).optional(),
+    }),
+    execute: async (ctx: ToolContext, args) => {
+      return await github_find_in_file(args, { clientId: ctx.clientId, agentId: ctx.agentId });
     },
   });
 

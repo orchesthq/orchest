@@ -183,6 +183,24 @@ export async function create_file_and_commit(
       };
     }
 
+    // Safety: only allow NEW files with this tool.
+    // If the file already exists, use github_apply_patch instead (prevents accidental whole-file rewrites).
+    try {
+      await getFileContent(creds.token, repo, input.path, input.branch);
+      return {
+        ok: false,
+        message:
+          `Not executed: ${input.path} already exists on branch '${input.branch}'. ` +
+          "Use github_apply_patch to edit existing files (safer than overwriting).",
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Continue only if it's a 404 (file not found). Any other error should abort.
+      if (!/\b404\b/.test(msg) && !/Path is not a file/i.test(msg)) {
+        return { ok: false, message: `Not executed: could not verify if file exists: ${msg}` };
+      }
+    }
+
     const branchRef = await getRef(creds.token, repo, input.branch);
     const commitSha = branchRef.object.sha;
     const commit = await getCommit(creds.token, repo, commitSha);
@@ -237,6 +255,33 @@ export async function open_pull_request(
   const repo = creds.repo;
 
   try {
+    // Safety gate: refuse to open PR if the diff is suspiciously large.
+    // This catches common failure modes like truncated reads → accidental deletions.
+    const cmp = await compareCommits(creds.token, repo, input.base, input.branch);
+    const files = cmp.files ?? [];
+    const totals = files.reduce(
+      (acc, f) => {
+        acc.additions += f.additions || 0;
+        acc.deletions += f.deletions || 0;
+        return acc;
+      },
+      { additions: 0, deletions: 0 }
+    );
+    const suspicious =
+      files.length > 40 ||
+      totals.deletions > 1500 ||
+      (totals.deletions > 500 && totals.deletions > totals.additions * 4);
+
+    if (suspicious) {
+      return {
+        ok: false,
+        message:
+          "Not executed: refusal to open PR because the diff looks unusually large. " +
+          "Review the changes first with github_list_changed_files and fix scope before opening a PR.",
+        metadata: { base: input.base, head: input.branch, totals, files: files.slice(0, 100) },
+      };
+    }
+
     const pr = await createPullRequest(
       creds.token,
       repo,
@@ -325,6 +370,142 @@ export async function github_read_file_chunk(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, message: `Failed to read file chunk: ${msg}` };
+  }
+}
+
+export async function github_find_in_file(
+  input: {
+    repo: string;
+    path: string;
+    ref?: string;
+    needle: string;
+    caseInsensitive?: boolean;
+    contextLines?: number;
+    maxMatches?: number;
+  },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
+  if (!creds) return { ok: false, message: noAccessMessage() };
+  if ("error" in creds) return { ok: false, message: creds.error };
+  const repo = creds.repo;
+
+  const needleRaw = String(input.needle ?? "").trim();
+  if (!needleRaw) return { ok: false, message: "Not executed: needle is required." };
+
+  const contextLines = Math.max(0, Math.min(50, Math.floor(Number(input.contextLines ?? 6))));
+  const maxMatches = Math.max(1, Math.min(50, Math.floor(Number(input.maxMatches ?? 20))));
+  const caseInsensitive = Boolean(input.caseInsensitive ?? false);
+
+  try {
+    const ref = input.ref?.trim() || creds.defaultBranch;
+    const { bytes, size } = await getFileContentBytes(creds.token, repo, input.path, ref);
+    if (bytes.length > 2_000_000) {
+      return {
+        ok: false,
+        message:
+          "File is too large for in-memory search (>2MB). Use github_read_file_chunk and search locally in chunks, or narrow the file/path.",
+        metadata: { path: input.path, ref, totalBytes: size },
+      };
+    }
+
+    const text = bytes.toString("utf8");
+    const haystack = caseInsensitive ? text.toLowerCase() : text;
+    const needle = caseInsensitive ? needleRaw.toLowerCase() : needleRaw;
+
+    // Precompute line starts for mapping indices → line numbers.
+    const lineStarts: number[] = [0];
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === "\n") lineStarts.push(i + 1);
+    }
+    const lineAt = (charIndex: number): number => {
+      // Binary search lineStarts for last start <= charIndex
+      let lo = 0;
+      let hi = lineStarts.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const v = lineStarts[mid]!;
+        if (v <= charIndex) lo = mid + 1;
+        else hi = mid - 1;
+      }
+      return Math.max(1, hi + 1);
+    };
+
+    const matches: Array<{
+      line: number;
+      startChar: number;
+      endChar: number;
+      startByte: number;
+      endByte: number;
+      windowStartLine: number;
+      windowEndLine: number;
+      windowText: string;
+    }> = [];
+
+    let from = 0;
+    while (matches.length < maxMatches) {
+      const idx = haystack.indexOf(needle, from);
+      if (idx === -1) break;
+      const end = idx + needle.length;
+
+      const line = lineAt(idx);
+      const windowStartLine = Math.max(1, line - contextLines);
+      const windowEndLine = Math.min(lineStarts.length, line + contextLines);
+
+      const charStart = lineStarts[windowStartLine - 1] ?? 0;
+      const charEnd =
+        windowEndLine < lineStarts.length ? (lineStarts[windowEndLine] ?? text.length) : text.length;
+
+      const windowText = text.slice(charStart, charEnd).trimEnd();
+
+      // Approximate byte offsets (utf8) from char offsets.
+      const startByte = Buffer.byteLength(text.slice(0, idx), "utf8");
+      const endByte = Buffer.byteLength(text.slice(0, end), "utf8");
+
+      matches.push({
+        line,
+        startChar: idx,
+        endChar: end,
+        startByte,
+        endByte,
+        windowStartLine,
+        windowEndLine,
+        windowText,
+      });
+
+      from = end;
+    }
+
+    if (matches.length === 0) {
+      return {
+        ok: true,
+        message: `No matches for '${needleRaw}' in ${input.path} at ${ref}.`,
+        metadata: { path: input.path, ref, totalBytes: size, matches: [] },
+      };
+    }
+
+    return {
+      ok: true,
+      message: `Found ${matches.length} match(es) for '${needleRaw}' in ${input.path} at ${ref}.`,
+      metadata: {
+        path: input.path,
+        ref,
+        totalBytes: size,
+        needle: needleRaw,
+        caseInsensitive,
+        matches: matches.map((m) => ({
+          line: m.line,
+          startByte: m.startByte,
+          endByte: m.endByte,
+          windowStartLine: m.windowStartLine,
+          windowEndLine: m.windowEndLine,
+          windowText: m.windowText,
+        })),
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Failed to search in file: ${msg}` };
   }
 }
 

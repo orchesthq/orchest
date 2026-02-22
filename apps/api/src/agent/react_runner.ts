@@ -119,6 +119,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
     "CRITICAL GitHub safety rules:",
     "- Prefer github_apply_patch over create_file_and_commit for existing files (avoid whole-file rewrites).",
     "- If github_read_file reports truncated=true (or content includes '[truncated]'), do NOT overwrite that file. Use github_read_file_chunk to fetch the needed parts first, then use github_apply_patch.",
+    "- If you can't find something in a large file, use github_find_in_file to locate it (line windows + byte offsets) before reading or editing.",
     "- Before opening a PR, call github_list_changed_files and confirm the changed files match your intended scope. If not, fix before opening the PR.",
     "When calling tools, include a short, user-safe status sentence in the assistant message (no hidden reasoning).",
     "If you have enough information, respond with a final user-facing answer.",
