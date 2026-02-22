@@ -10,6 +10,7 @@ import { getClientIdFromSession } from "@/lib/session";
 import { getPersonaByKey } from "@/lib/personas";
 import { PendingForm } from "@/components/PendingForm";
 import { PendingSubmitButton } from "@/components/PendingSubmitButton";
+import { LoadingLink } from "@/components/LoadingLink";
 
 type Agent = {
   id: string;
@@ -167,12 +168,13 @@ export default async function AgentPage({
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Agent</h1>
             <p className="mt-1 text-sm text-zinc-600">Unable to load agent details.</p>
           </div>
-          <Link
+          <LoadingLink
             href="/app/agents"
             className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            pendingText="Back…"
           >
             Back
-          </Link>
+          </LoadingLink>
         </div>
 
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm">
@@ -244,12 +246,13 @@ export default async function AgentPage({
             <p className="mt-1 text-sm text-zinc-600">{agentResp.agent.role}</p>
           </div>
         </div>
-        <Link
+        <LoadingLink
           href="/app/agents"
           className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+          pendingText="Back…"
         >
           Back
-        </Link>
+        </LoadingLink>
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">

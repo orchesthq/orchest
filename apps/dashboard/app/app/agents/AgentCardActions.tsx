@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DEFAULT_ROLE_BY_PERSONA } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
+import { LoadingLink } from "@/components/LoadingLink";
 
 type Agent = {
   id: string;
@@ -52,7 +53,8 @@ export function AgentCardActions({ personaKey, personaName, agent }: Props) {
     try {
       const res = await fetch(`/api/agents/${agent.id}`, { method: "DELETE" });
       if (!res.ok) {
-        setError("Failed to disable");
+        const j = await res.json().catch(() => null);
+        setError((j as any)?.error ?? "Failed to disable");
         return;
       }
       router.refresh();
@@ -88,12 +90,13 @@ export function AgentCardActions({ personaKey, personaName, agent }: Props) {
         </button>
       ) : (
         <>
-          <Link
+          <LoadingLink
             href={`/app/agents/${agent.id}`}
             className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            pendingText="Opening…"
           >
             Manage
-          </Link>
+          </LoadingLink>
           <button
             type="button"
             onClick={handleDisable}

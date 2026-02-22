@@ -52,9 +52,14 @@ export async function DELETE(
     return NextResponse.json({ error: "Invalid agent id" }, { status: 400 });
   }
 
-  await apiFetchForClient(clientId, `/agents/${agentIdParsed.data}`, {
-    method: "DELETE",
-  });
+  try {
+    await apiFetchForClient(clientId, `/agents/${agentIdParsed.data}`, {
+      method: "DELETE",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 502 });
+  }
 
   return new NextResponse(null, { status: 204 });
 }
