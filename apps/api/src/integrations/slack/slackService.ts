@@ -107,16 +107,22 @@ export async function getSlackAuthorizeUrl(input: { botKey: string; state: strin
   const app = await requireSlackBotApp(input.botKey);
   const redirectUri = requireSlackRedirectUri();
 
-  // Bot scopes needed for: events + messaging + persona customization.
+  // Bot scopes needed for: events + messaging + persona customization + thread context + canvases.
   const scopes = [
     "chat:write",
     "chat:write.customize",
     "im:write",
     "channels:read",
+    "channels:history",
     "groups:read",
+    "groups:history",
     "im:read",
+    "im:history",
     "mpim:read",
+    "mpim:history",
     "app_mentions:read",
+    "files:read",
+    "canvases:write",
   ].join(",");
 
   const url = new URL("https://slack.com/oauth/v2/authorize");
@@ -480,6 +486,36 @@ function normalizeSlackText(text: string): string {
     .trim();
 }
 
+async function fetchThreadContext(input: {
+  token: string;
+  channel: string;
+  threadTs: string;
+}): Promise<string> {
+  try {
+    const json = await slackApi(input.token, "conversations.replies", {
+      channel: input.channel,
+      ts: input.threadTs,
+      limit: 12,
+      inclusive: true,
+    });
+
+    const messages: any[] = Array.isArray(json?.messages) ? json.messages : [];
+    const lines = messages
+      .filter((m) => typeof m?.text === "string" && m.text.trim().length > 0)
+      .slice(-10)
+      .map((m) => {
+        const who = m.bot_id || m.subtype === "bot_message" ? "assistant" : "user";
+        const t = normalizeSlackText(String(m.text));
+        return `${who}: ${t}`;
+      });
+
+    if (lines.length === 0) return "";
+    return ["", "Thread context (most recent):", ...lines].join("\n");
+  } catch {
+    return "";
+  }
+}
+
 function slackMrkdwnFromMarkdown(text: string): string {
   let s = String(text ?? "");
   // Headings: "## Title" -> "*Title*"
@@ -535,6 +571,28 @@ async function postSlackTextChunked(input: {
   }
 }
 
+async function createSlackCanvasFromMarkdown(input: {
+  token: string;
+  title: string;
+  markdown: string;
+}): Promise<{ canvasId: string; url?: string }> {
+  const created = await slackApi(input.token, "canvases.create", {
+    title: input.title,
+    document_content: { type: "markdown", markdown: input.markdown },
+  });
+
+  const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
+  if (!canvasId) return { canvasId: "" };
+
+  try {
+    const info = await slackApi(input.token, "files.info", { file: canvasId });
+    const url: string | undefined = info?.file?.permalink;
+    return { canvasId, url };
+  } catch {
+    return { canvasId };
+  }
+}
+
 async function runTaskAndReply(input: {
   installation: SlackInstallationRow;
   agentLink: SlackAgentLinkRow;
@@ -552,10 +610,16 @@ async function runTaskAndReply(input: {
     limit: 10,
   }).catch(() => []);
 
+  const threadContext = await fetchThreadContext({
+    token: input.installation.bot_access_token,
+    channel: input.channel,
+    threadTs: input.threadTs,
+  });
+
   const task = await createTaskForAgentScoped({
     clientId: input.installation.client_id,
     agentId: agent.id,
-    taskInput: input.taskText,
+    taskInput: `${input.taskText}${threadContext}`,
   });
 
   let postedProgressHeader = false;
@@ -614,6 +678,42 @@ async function runTaskAndReply(input: {
     },
   })
     .then(async (result) => {
+      const isLong = result.summary.length > 2500 || result.summary.split("\n").length > 60;
+
+      if (isLong) {
+        try {
+          const title = input.taskText.trim().slice(0, 80) || `Task ${task.id.slice(0, 8)}`;
+          const canvas = await createSlackCanvasFromMarkdown({
+            token: input.installation.bot_access_token,
+            title,
+            markdown: result.summary,
+          });
+
+          if (canvas.url) {
+            await slackApi(input.installation.bot_access_token, "chat.postMessage", {
+              channel: input.channel,
+              thread_ts: input.threadTs,
+              text: `I put the full write-up in a Canvas: <${canvas.url}|open canvas>.`,
+              username: input.agentLink.display_name,
+              icon_url: input.agentLink.icon_url ?? undefined,
+            });
+
+            const preview = result.summary.split("\n").slice(0, 12).join("\n") + "\n\n…";
+            await postSlackTextChunked({
+              token: input.installation.bot_access_token,
+              channel: input.channel,
+              threadTs: input.threadTs,
+              text: preview,
+              username: input.agentLink.display_name,
+              iconUrl: input.agentLink.icon_url ?? undefined,
+            });
+            return;
+          }
+        } catch (err) {
+          console.error("[slack] canvases.create failed; falling back to thread", err);
+        }
+      }
+
       await postSlackTextChunked({
         token: input.installation.bot_access_token,
         channel: input.channel,
