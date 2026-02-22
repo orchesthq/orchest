@@ -11,7 +11,7 @@ import {
   searchCode,
   updateRef,
 } from "./githubApi";
-import { getAgentGitHubConnection, getValidInstallationToken } from "./githubService";
+import { getValidInstallationToken, listAgentGitHubConnections } from "./githubService";
 import { getGitHubInstallationById } from "../../db/schema";
 
 export type GitHubToolResult = {
@@ -25,35 +25,99 @@ export type GitHubToolContext = {
   agentId: string;
 };
 
-async function getTokenAndRepo(ctx: GitHubToolContext | null): Promise<{
+function formatAllowedRepos(connections: Array<{ default_repo: string }>): string {
+  const repos = connections.map((c) => c.default_repo);
+  const uniq = Array.from(new Set(repos)).slice(0, 15);
+  const more = repos.length > uniq.length ? ` (+${repos.length - uniq.length} more)` : "";
+  return uniq.join(", ") + more;
+}
+
+async function resolveConnectionForRepo(
+  ctx: GitHubToolContext | null,
+  requestedRepo: string
+): Promise<
+  | {
+      connection: {
+        github_installation_id: string;
+        commit_author_name: string;
+        commit_author_email: string;
+        access_level: string;
+        default_branch: string;
+      };
+      repo: string;
+    }
+  | { error: string }
+  | null
+> {
+  if (!ctx) return null;
+  const connections = await listAgentGitHubConnections(ctx.clientId, ctx.agentId);
+  if (connections.length === 0) return null;
+
+  const repo = String(requestedRepo ?? "").trim();
+
+  if (!repo) {
+    const nonWildcard = connections.filter((c) => c.default_repo !== "*");
+    if (nonWildcard.length === 1) {
+      return { connection: nonWildcard[0], repo: nonWildcard[0].default_repo };
+    }
+    if (connections.length === 1 && connections[0]?.default_repo === "*") {
+      return {
+        error:
+          "Repository is required. This agent is linked to *all repos*, so the tool call must include a repo like 'owner/name'.",
+      };
+    }
+    return {
+      error: `Repository is required. This agent is linked to multiple repos (${formatAllowedRepos(
+        connections
+      )}). Please specify which repo to act on.`,
+    };
+  }
+
+  const exact = connections.find((c) => c.default_repo === repo);
+  if (exact) return { connection: exact, repo };
+
+  const wildcard = connections.find((c) => c.default_repo === "*");
+  if (wildcard) return { connection: wildcard, repo };
+
+  return {
+    error: `Not executed: repo '${repo}' is not linked for this agent. Allowed repos: ${formatAllowedRepos(
+      connections
+    )}.`,
+  };
+}
+
+async function getTokenAndRepo(
+  ctx: GitHubToolContext | null,
+  requestedRepo: string
+): Promise<{
   token: string;
   repo: string;
   author: { name: string; email: string };
   defaultBranch: string;
   accessLevel: string;
-} | null> {
-  if (!ctx) return null;
-  const connection = await getAgentGitHubConnection(ctx.clientId, ctx.agentId);
-  if (!connection || !connection.default_repo) return null;
+} | { error: string } | null> {
+  const resolved = await resolveConnectionForRepo(ctx, requestedRepo);
+  if (!resolved) return null;
+  if ("error" in resolved) return resolved;
 
-  const installation = await getGitHubInstallationById(connection.github_installation_id);
+  const installation = await getGitHubInstallationById(resolved.connection.github_installation_id);
   if (!installation) return null;
 
   const token = await getValidInstallationToken(installation.installation_id);
   return {
     token,
-    repo: connection.default_repo,
+    repo: resolved.repo,
     author: {
-      name: connection.commit_author_name,
-      email: connection.commit_author_email,
+      name: resolved.connection.commit_author_name,
+      email: resolved.connection.commit_author_email,
     },
-    defaultBranch: connection.default_branch,
-    accessLevel: connection.access_level,
+    defaultBranch: resolved.connection.default_branch,
+    accessLevel: resolved.connection.access_level,
   };
 }
 
 function noAccessMessage(): string {
-  return "Not executed: this agent is not linked to GitHub, or no repository is configured. Link the agent to GitHub in the Orchest dashboard and specify a repository.";
+  return "Not executed: this agent is not linked to GitHub. Link the agent to GitHub in the Orchest dashboard and add at least one repository (or select 'all repos').";
 }
 
 function readOnlyMessage(): string {
@@ -64,18 +128,16 @@ export async function create_branch(
   input: { repo: string; base: string; branch: string },
   ctx?: GitHubToolContext | null
 ): Promise<GitHubToolResult> {
-  const creds = await getTokenAndRepo(ctx ?? null);
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
   if (!creds) {
     return { ok: false, message: noAccessMessage() };
   }
+  if ("error" in creds) return { ok: false, message: creds.error };
   if (creds.accessLevel === "read") {
     return { ok: false, message: readOnlyMessage() };
   }
 
-  const repo = input.repo || creds.repo;
-  if (repo !== creds.repo) {
-    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
-  }
+  const repo = creds.repo;
 
   try {
     const baseRef = await getRef(creds.token, repo, input.base);
@@ -95,18 +157,16 @@ export async function create_file_and_commit(
   input: { repo: string; branch: string; path: string; content: string; message: string },
   ctx?: GitHubToolContext | null
 ): Promise<GitHubToolResult> {
-  const creds = await getTokenAndRepo(ctx ?? null);
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
   if (!creds) {
     return { ok: false, message: noAccessMessage() };
   }
+  if ("error" in creds) return { ok: false, message: creds.error };
   if (creds.accessLevel === "read") {
     return { ok: false, message: readOnlyMessage() };
   }
 
-  const repo = input.repo || creds.repo;
-  if (repo !== creds.repo) {
-    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
-  }
+  const repo = creds.repo;
 
   try {
     const branchRef = await getRef(creds.token, repo, input.branch);
@@ -151,18 +211,16 @@ export async function open_pull_request(
   input: { repo: string; branch: string; base: string; title: string; body?: string },
   ctx?: GitHubToolContext | null
 ): Promise<GitHubToolResult> {
-  const creds = await getTokenAndRepo(ctx ?? null);
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
   if (!creds) {
     return { ok: false, message: noAccessMessage() };
   }
+  if ("error" in creds) return { ok: false, message: creds.error };
   if (creds.accessLevel === "read") {
     return { ok: false, message: readOnlyMessage() };
   }
 
-  const repo = input.repo || creds.repo;
-  if (repo !== creds.repo) {
-    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
-  }
+  const repo = creds.repo;
 
   try {
     const pr = await createPullRequest(
@@ -188,14 +246,12 @@ export async function github_read_file(
   input: { repo: string; path: string; ref?: string },
   ctx?: GitHubToolContext | null
 ): Promise<GitHubToolResult> {
-  const creds = await getTokenAndRepo(ctx ?? null);
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
   if (!creds) {
     return { ok: false, message: noAccessMessage() };
   }
-  const repo = input.repo || creds.repo;
-  if (repo !== creds.repo) {
-    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
-  }
+  if ("error" in creds) return { ok: false, message: creds.error };
+  const repo = creds.repo;
 
   try {
     const ref = input.ref?.trim() || creds.defaultBranch;
@@ -216,14 +272,12 @@ export async function github_list_tree(
   input: { repo: string; ref?: string; pathPrefix?: string; recursive?: boolean },
   ctx?: GitHubToolContext | null
 ): Promise<GitHubToolResult> {
-  const creds = await getTokenAndRepo(ctx ?? null);
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
   if (!creds) {
     return { ok: false, message: noAccessMessage() };
   }
-  const repo = input.repo || creds.repo;
-  if (repo !== creds.repo) {
-    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
-  }
+  if ("error" in creds) return { ok: false, message: creds.error };
+  const repo = creds.repo;
 
   try {
     const ref = input.ref?.trim() || creds.defaultBranch;
@@ -252,14 +306,12 @@ export async function github_search_code(
   input: { repo: string; query: string },
   ctx?: GitHubToolContext | null
 ): Promise<GitHubToolResult> {
-  const creds = await getTokenAndRepo(ctx ?? null);
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
   if (!creds) {
     return { ok: false, message: noAccessMessage() };
   }
-  const repo = input.repo || creds.repo;
-  if (repo !== creds.repo) {
-    return { ok: false, message: `Not executed: agent is linked to ${creds.repo}, not ${repo}.` };
-  }
+  if ("error" in creds) return { ok: false, message: creds.error };
+  const repo = creds.repo;
 
   try {
     const results = await searchCode(creds.token, repo, input.query);

@@ -124,7 +124,7 @@ export type GitHubAgentConnectionRow = {
   commit_author_email: string;
   access_level: "read" | "pr_only" | "direct_push";
   default_branch: string;
-  default_repo: string | null;
+  default_repo: string;
   created_at: string;
   updated_at: string;
 };
@@ -940,20 +940,19 @@ export async function deleteGitHubInstallationByClientId(clientId: string): Prom
   return rows.length > 0;
 }
 
-export async function getGitHubAgentConnectionByAgentId(
+export async function listGitHubAgentConnectionsByAgentId(
   agentId: string
-): Promise<GitHubAgentConnectionRow | null> {
+): Promise<GitHubAgentConnectionRow[]> {
   assertUuid(agentId, "agentId");
   const { rows } = await query<GitHubAgentConnectionRow>(
     [
       "select id, agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, default_repo, created_at, updated_at",
       "from github_agent_connections",
       "where agent_id = $1",
-      "limit 1",
     ].join("\n"),
     [agentId]
   );
-  return rows[0] ?? null;
+  return rows;
 }
 
 export async function deleteGitHubAgentConnectionScoped(input: {
@@ -977,14 +976,38 @@ export async function deleteGitHubAgentConnectionScoped(input: {
   return rows.length > 0;
 }
 
-export async function createGitHubAgentConnection(input: {
+export async function deleteGitHubAgentConnectionByIdScoped(input: {
+  clientId: string;
+  agentId?: string;
+  connectionId: string;
+}): Promise<boolean> {
+  assertUuid(input.clientId, "clientId");
+  if (input.agentId) assertUuid(input.agentId, "agentId");
+  assertUuid(input.connectionId, "connectionId");
+
+  const { rows } = await query<{ id: string }>(
+    [
+      "delete from github_agent_connections gac",
+      "using agents a",
+      "where a.id = gac.agent_id",
+      "  and a.client_id = $1",
+      "  and gac.id = $2",
+      input.agentId ? "  and a.id = $3" : "",
+      "returning gac.id",
+    ].join("\n"),
+    input.agentId ? [input.clientId, input.connectionId, input.agentId] : [input.clientId, input.connectionId]
+  );
+  return rows.length > 0;
+}
+
+export async function upsertGitHubAgentConnection(input: {
   agentId: string;
   githubInstallationId: string;
   commitAuthorName: string;
   commitAuthorEmail: string;
   accessLevel: "read" | "pr_only" | "direct_push";
   defaultBranch: string;
-  defaultRepo?: string | null;
+  defaultRepo: string;
 }): Promise<GitHubAgentConnectionRow> {
   assertUuid(input.agentId, "agentId");
   assertUuid(input.githubInstallationId, "githubInstallationId");
@@ -992,7 +1015,7 @@ export async function createGitHubAgentConnection(input: {
     [
       "insert into github_agent_connections (agent_id, github_installation_id, commit_author_name, commit_author_email, access_level, default_branch, default_repo, updated_at)",
       "values ($1, $2, $3, $4, $5, $6, $7, now())",
-      "on conflict (agent_id) do update set",
+      "on conflict (agent_id, default_repo) do update set",
       "  github_installation_id = excluded.github_installation_id,",
       "  commit_author_name = excluded.commit_author_name,",
       "  commit_author_email = excluded.commit_author_email,",
@@ -1009,9 +1032,9 @@ export async function createGitHubAgentConnection(input: {
       input.commitAuthorEmail,
       input.accessLevel,
       input.defaultBranch,
-      input.defaultRepo ?? null,
+      input.defaultRepo,
     ]
   );
-  return one(rows, "Failed to create GitHub agent connection");
+  return one(rows, "Failed to upsert GitHub agent connection");
 }
 

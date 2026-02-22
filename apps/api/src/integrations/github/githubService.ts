@@ -1,8 +1,8 @@
 import crypto from "crypto";
 import { z } from "zod";
 import {
-  createGitHubAgentConnection,
-  getGitHubAgentConnectionByAgentId,
+  listGitHubAgentConnectionsByAgentId,
+  upsertGitHubAgentConnection,
   getGitHubInstallationByClientId,
   getGitHubInstallationById,
   upsertGitHubInstallation,
@@ -308,10 +308,10 @@ export async function linkAgentToGitHub(input: {
 
   const safeEmail = (s: string) => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
   if (!input.defaultRepo?.trim()) {
-    throw new Error("Repository is required. Select a repository when linking the agent.");
+    throw new Error("Repository is required. Select a repository (or choose 'all repos') when linking the agent.");
   }
 
-  return createGitHubAgentConnection({
+  return upsertGitHubAgentConnection({
     agentId: input.agentId,
     githubInstallationId: installation.id,
     commitAuthorName: input.commitAuthorName?.trim() || agent.name,
@@ -342,13 +342,13 @@ export async function listInstallationRepos(clientId: string): Promise<Array<{ f
   return json.repositories?.map((r) => ({ full_name: r.full_name })) ?? [];
 }
 
-export async function getAgentGitHubConnection(
+export async function listAgentGitHubConnections(
   clientId: string,
   agentId: string
-): Promise<GitHubAgentConnectionRow | null> {
+): Promise<GitHubAgentConnectionRow[]> {
   const agent = await getAgentByIdScoped(clientId, agentId);
-  if (!agent) return null;
-  return getGitHubAgentConnectionByAgentId(agentId);
+  if (!agent) return [];
+  return listGitHubAgentConnectionsByAgentId(agentId);
 }
 
 /**

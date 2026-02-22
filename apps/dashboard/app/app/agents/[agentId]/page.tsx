@@ -8,6 +8,8 @@ import { DisableButton } from "./DisableButton";
 import { z } from "zod";
 import { getClientIdFromSession } from "@/lib/session";
 import { getPersonaByKey } from "@/lib/personas";
+import { PendingForm } from "@/components/PendingForm";
+import { PendingSubmitButton } from "@/components/PendingSubmitButton";
 
 type Agent = {
   id: string;
@@ -54,13 +56,15 @@ type GitHubConnection = {
   commit_author_email: string;
   access_level: string;
   default_branch: string;
-  default_repo: string | null;
+  default_repo: string;
 };
 
 export default async function AgentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ agentId: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const session = await getServerSession(authOptions);
   const clientId = getClientIdFromSession(session);
@@ -88,7 +92,7 @@ export default async function AgentPage({
   let slackStatus: SlackStatus | null = null;
   let slackLink: SlackLink | null = null;
   let githubStatus: GitHubStatus | null = null;
-  let githubConnection: GitHubConnection | null = null;
+  let githubConnections: GitHubConnection[] = [];
   let githubRepos: Array<{ full_name: string }> = [];
   let loadError: string | null = null;
   try {
@@ -129,14 +133,14 @@ export default async function AgentPage({
     }
 
     try {
-      const connResp = await apiFetchForClient<{ connection: GitHubConnection }>(
+      const connResp = await apiFetchForClient<{ connections: GitHubConnection[] }>(
         clientId,
-        `/internal/github/agents/${agentIdParsed.data}/connection`,
+        `/internal/github/agents/${agentIdParsed.data}/connections`,
         { method: "GET" }
       );
-      githubConnection = connResp.connection ?? null;
+      githubConnections = connResp.connections ?? [];
     } catch {
-      githubConnection = null;
+      githubConnections = [];
     }
 
   if (githubStatus?.connected) {
@@ -183,9 +187,43 @@ export default async function AgentPage({
   const botKey = agentResp.agent.persona_key ?? "ava";
   const isLinked = Boolean(slackLink);
   const persona = getPersonaByKey(botKey);
+  const sp = (await searchParams) ?? {};
+  const githubBanner = typeof sp.github === "string" ? sp.github : undefined;
+  const errorBanner = typeof sp.error === "string" ? sp.error : undefined;
 
   return (
     <div className="space-y-6">
+      {githubBanner || errorBanner ? (
+        <div
+          className={[
+            "rounded-2xl border p-4 text-sm shadow-sm",
+            errorBanner ? "border-rose-200 bg-rose-50 text-rose-900" : "border-emerald-200 bg-emerald-50 text-emerald-900",
+          ].join(" ")}
+        >
+          {errorBanner ? (
+            <div>
+              {errorBanner === "github_repo_required" ? "Select a repository (or choose 'All repos')." : null}
+              {errorBanner === "github_link_failed" ? "GitHub link failed. Check the API logs for details." : null}
+              {errorBanner === "github_unlink_failed" ? "GitHub unlink failed. Check the API logs for details." : null}
+              {errorBanner === "github_update_failed" ? "GitHub update failed. Check the API logs for details." : null}
+              {errorBanner === "github_remove_link_failed" ? "Removing that GitHub link failed. Check the API logs for details." : null}
+              {!["github_repo_required", "github_link_failed", "github_unlink_failed", "github_update_failed", "github_remove_link_failed"].includes(
+                errorBanner
+              )
+                ? `Action failed: ${errorBanner}`
+                : null}
+            </div>
+          ) : (
+            <div>
+              {githubBanner === "linked" ? "GitHub repo link saved." : null}
+              {githubBanner === "unlinked" ? "GitHub link removed." : null}
+              {githubBanner === "updated" ? "GitHub repo link updated." : null}
+              {githubBanner === "removed" ? "GitHub repo link removed." : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           {persona?.imagePath && (
@@ -262,166 +300,180 @@ export default async function AgentPage({
             >
               Go to GitHub integration
             </Link>
-          ) : githubConnection ? (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2 text-sm text-emerald-700">
-                <span>Linked to</span>
-                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">
-                  {githubConnection.default_repo ?? "(no repo)"}
-                </code>
-                <span>({githubConnection.access_level})</span>
-                <span>as</span>
-                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">
-                  {githubConnection.commit_author_name} &lt;{githubConnection.commit_author_email}&gt;
-                </code>
-              </div>
-              <div className="flex flex-wrap items-end gap-3">
-                <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
-                  <div>
-                    <label htmlFor="defaultRepo" className="block text-xs font-medium text-zinc-500">
-                      Repository
-                    </label>
-                    <select
-                      id="defaultRepo"
-                      name="defaultRepo"
-                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                      defaultValue={githubConnection.default_repo ?? ""}
-                    >
-                      {githubRepos.map((r) => (
-                        <option key={r.full_name} value={r.full_name}>
-                          {r.full_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="accessLevel" className="block text-xs font-medium text-zinc-500">
-                      Access
-                    </label>
-                    <select
-                      id="accessLevel"
-                      name="accessLevel"
-                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                      defaultValue={githubConnection.access_level}
-                    >
-                      <option value="read">Read only</option>
-                      <option value="pr_only">PR only (recommended)</option>
-                      <option value="direct_push">Direct push</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="commitAuthorName" className="block text-xs font-medium text-zinc-500">
-                      Commit author name
-                    </label>
-                    <input
-                      id="commitAuthorName"
-                      name="commitAuthorName"
-                      type="text"
-                      defaultValue={githubConnection.commit_author_name}
-                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="commitAuthorEmail" className="block text-xs font-medium text-zinc-500">
-                      Commit author email
-                    </label>
-                    <input
-                      id="commitAuthorEmail"
-                      name="commitAuthorEmail"
-                      type="email"
-                      defaultValue={githubConnection.commit_author_email}
-                      className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                  >
-                    Update
-                  </button>
-                </form>
-                <form action={`/app/agents/${agentIdParsed.data}/github/unlink`} method="post">
-                  <button
-                    type="submit"
-                    className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                  >
-                    Remove link
-                  </button>
-                </form>
-              </div>
-            </div>
           ) : githubRepos.length === 0 ? (
             <p className="text-xs text-amber-700">
               No repositories found. Ensure the Orchest GitHub App has access to at least one repository, then refresh.
             </p>
           ) : (
-            <form action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
-              <div className="flex flex-wrap items-end gap-3">
-                <div>
-                  <label htmlFor="defaultRepo" className="block text-xs font-medium text-zinc-500">
-                    Repository *
-                  </label>
-                  <select
-                    id="defaultRepo"
-                    name="defaultRepo"
-                    required
-                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                  >
-                    <option value="">Select repository</option>
-                    {githubRepos.map((r) => (
-                      <option key={r.full_name} value={r.full_name}>
-                        {r.full_name}
-                      </option>
+            <div className="space-y-4">
+              {githubConnections.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-sm text-zinc-700">
+                    Linked repos:{" "}
+                    <span className="font-medium">
+                      {githubConnections.some((c) => c.default_repo === "*")
+                        ? "All repos"
+                        : `${githubConnections.length} repo${githubConnections.length === 1 ? "" : "s"}`}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {githubConnections.map((c, idx) => (
+                      <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="mb-3 text-xs font-medium text-zinc-500">Repo link #{idx + 1}</div>
+                        <div className="flex flex-wrap items-end gap-3">
+                          <PendingForm action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
+                            <input type="hidden" name="connectionId" value={c.id} />
+                            <div className="flex flex-wrap items-end gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-zinc-500">Repository</label>
+                                <select
+                                  name="defaultRepo"
+                                  className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                                  defaultValue={c.default_repo}
+                                >
+                                  <option value="*">All repos</option>
+                                  {githubRepos.map((r) => (
+                                    <option key={r.full_name} value={r.full_name}>
+                                      {r.full_name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-zinc-500">Access</label>
+                                <select
+                                  name="accessLevel"
+                                  className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                                  defaultValue={c.access_level}
+                                >
+                                  <option value="read">Read only</option>
+                                  <option value="pr_only">PR only (recommended)</option>
+                                  <option value="direct_push">Direct push</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-zinc-500">Commit author name</label>
+                                <input
+                                  name="commitAuthorName"
+                                  type="text"
+                                  defaultValue={c.commit_author_name}
+                                  className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-zinc-500">Commit author email</label>
+                                <input
+                                  name="commitAuthorEmail"
+                                  type="email"
+                                  defaultValue={c.commit_author_email}
+                                  className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                                />
+                              </div>
+                              <PendingSubmitButton
+                                pendingText="Saving…"
+                                className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                              >
+                                Update
+                              </PendingSubmitButton>
+                            </div>
+                          </PendingForm>
+
+                          <PendingForm action={`/app/agents/${agentIdParsed.data}/github/unlink`} method="post">
+                            <input type="hidden" name="connectionId" value={c.id} />
+                            <PendingSubmitButton
+                              pendingText="Removing…"
+                              className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                            >
+                              Remove link
+                            </PendingSubmitButton>
+                          </PendingForm>
+                        </div>
+                      </div>
                     ))}
-                  </select>
+                  </div>
                 </div>
-                <div>
-                  <label htmlFor="accessLevel" className="block text-xs font-medium text-zinc-500">
-                    Access
-                  </label>
-                  <select
-                    id="accessLevel"
-                    name="accessLevel"
-                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                    defaultValue="pr_only"
-                  >
-                    <option value="read">Read only</option>
-                    <option value="pr_only">PR only (recommended)</option>
-                    <option value="direct_push">Direct push</option>
-                  </select>
+              ) : null}
+
+              <div className="rounded-xl border border-zinc-200 bg-white p-4">
+                <div className="mb-3 text-xs font-medium text-zinc-500">
+                  {githubConnections.length > 0 ? "Add repo link" : "Link to GitHub"}
                 </div>
-                <div>
-                  <label htmlFor="commitAuthorName" className="block text-xs font-medium text-zinc-500">
-                    Commit author name
-                  </label>
-                  <input
-                    id="commitAuthorName"
-                    name="commitAuthorName"
-                    type="text"
-                    defaultValue={agentResp.agent.name}
-                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="commitAuthorEmail" className="block text-xs font-medium text-zinc-500">
-                    Commit author email
-                  </label>
-                  <input
-                    id="commitAuthorEmail"
-                    name="commitAuthorEmail"
-                    type="email"
-                    defaultValue={`${agentResp.agent.name.toLowerCase().replace(/\s+/g, "-")}@agents.orchest.io`}
-                    className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="h-9 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                >
-                  Link to GitHub
-                </button>
+                <PendingForm action={`/app/agents/${agentIdParsed.data}/github/link`} method="post">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500">Repository *</label>
+                      <select
+                        name="defaultRepo"
+                        required
+                        className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                        defaultValue=""
+                      >
+                        <option value="">Select repository</option>
+                        <option value="*">All repos</option>
+                        {githubRepos.map((r) => (
+                          <option key={r.full_name} value={r.full_name}>
+                            {r.full_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500">Access</label>
+                      <select
+                        name="accessLevel"
+                        className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                        defaultValue="pr_only"
+                      >
+                        <option value="read">Read only</option>
+                        <option value="pr_only">PR only (recommended)</option>
+                        <option value="direct_push">Direct push</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500">Commit author name</label>
+                      <input
+                        name="commitAuthorName"
+                        type="text"
+                        defaultValue={githubConnections[0]?.commit_author_name ?? agentResp.agent.name}
+                        className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500">Commit author email</label>
+                      <input
+                        name="commitAuthorEmail"
+                        type="email"
+                        defaultValue={
+                          githubConnections[0]?.commit_author_email ??
+                          `${agentResp.agent.name.toLowerCase().replace(/\s+/g, "-")}@agents.orchest.io`
+                        }
+                        className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
+                      />
+                    </div>
+                    <PendingSubmitButton
+                      pendingText="Linking…"
+                      className="h-9 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                    >
+                      {githubConnections.length > 0 ? "Add link" : "Link to GitHub"}
+                    </PendingSubmitButton>
+                  </div>
+                </PendingForm>
               </div>
-            </form>
+
+              {githubConnections.length > 0 ? (
+                <div className="pt-1">
+                  <PendingForm action={`/app/agents/${agentIdParsed.data}/github/unlink`} method="post">
+                    <PendingSubmitButton
+                      pendingText="Removing…"
+                      className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                    >
+                      Remove all GitHub links
+                    </PendingSubmitButton>
+                  </PendingForm>
+                </div>
+              ) : null}
+            </div>
           )}
         </div>
       </div>

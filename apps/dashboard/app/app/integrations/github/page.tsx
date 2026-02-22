@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { getClientIdFromSession } from "@/lib/session";
+import { PendingForm } from "@/components/PendingForm";
+import { PendingSubmitButton } from "@/components/PendingSubmitButton";
 
 type GitHubStatus = {
   connected: boolean;
@@ -123,19 +125,19 @@ export default async function GitHubIntegrationPage(props: {
             )}
 
             {status?.configured && status?.connected && (
-              <form
+              <PendingForm
                 action={`/app/integrations/github/disconnect?returnTo=${encodeURIComponent(
                   returnTo || "/app/integrations/github"
                 )}`}
                 method="post"
               >
-                <button
-                  type="submit"
-                  className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                <PendingSubmitButton
+                  pendingText="Disconnecting…"
+                  className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
                 >
                   Disconnect
-                </button>
-              </form>
+                </PendingSubmitButton>
+              </PendingForm>
             )}
           </div>
         </div>
@@ -153,7 +155,11 @@ export default async function GitHubIntegrationPage(props: {
             If GitHub takes you to settings instead of redirecting back, you can manually link an existing installation by pasting its installation id
             (from `github.com/settings/installations/&lt;id&gt;`).
           </p>
-          <form action="/app/integrations/github/link-existing" method="post" className="mt-4 flex flex-wrap items-end gap-3">
+          <PendingForm
+            action="/app/integrations/github/link-existing"
+            method="post"
+            className="mt-4 flex flex-wrap items-end gap-3"
+          >
             <input type="hidden" name="returnTo" value={returnTo || ""} />
             <div>
               <label htmlFor="installationId" className="block text-xs font-medium text-zinc-500">
@@ -168,13 +174,13 @@ export default async function GitHubIntegrationPage(props: {
                 className="mt-0.5 h-9 w-56 rounded-md border border-zinc-200 px-3 text-sm"
               />
             </div>
-            <button
-              type="submit"
-              className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            <PendingSubmitButton
+              pendingText="Linking…"
+              className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
             >
               Link installation
-            </button>
-          </form>
+            </PendingSubmitButton>
+          </PendingForm>
         </div>
       )}
 
