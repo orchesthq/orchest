@@ -42,6 +42,11 @@ let slackBotAppsCache:
     }
   | undefined;
 
+const SLACK_DEBUG = process.env.ORCHEST_SLACK_DEBUG === "1";
+function slackDebugLog(...args: any[]) {
+  if (SLACK_DEBUG) console.log(...args);
+}
+
 function requireSlackRedirectUri(): string {
   const v = process.env.SLACK_REDIRECT_URI;
   if (!v) throw new SlackConfigError("SLACK_REDIRECT_URI is not configured");
@@ -311,13 +316,16 @@ async function slackApi(token: string, method: string, payload: Record<string, a
   }
   if (!json?.ok) {
     const err = String(json?.error ?? "unknown_error");
-    const detail = json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
-    const meta = json?.response_metadata ? ` response_metadata=${JSON.stringify(json.response_metadata)}` : "";
     const needed = json?.needed ? ` needed=${String(json.needed)}` : "";
     const provided = json?.provided ? ` provided=${String(json.provided)}` : "";
-    const payloadSummary = JSON.stringify(redactSlackPayload(payload));
+    const detail = SLACK_DEBUG && json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
+    const meta =
+      SLACK_DEBUG && json?.response_metadata
+        ? ` response_metadata=${JSON.stringify(json.response_metadata)}`
+        : "";
+    const payloadSummary = SLACK_DEBUG ? ` payload=${JSON.stringify(redactSlackPayload(payload))}` : "";
     throw new Error(
-      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided} payload=${payloadSummary}${meta}`
+      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided}${payloadSummary}${meta}`
     );
   }
   return json;
@@ -352,14 +360,16 @@ async function slackApiGet(token: string, method: string, params: Record<string,
   }
   if (!json?.ok) {
     const err = String(json?.error ?? "unknown_error");
-    const detail = json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
-    const meta = json?.response_metadata ? ` response_metadata=${JSON.stringify(json.response_metadata)}` : "";
     const needed = json?.needed ? ` needed=${String(json.needed)}` : "";
     const provided = json?.provided ? ` provided=${String(json.provided)}` : "";
+    const detail = SLACK_DEBUG && json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
+    const meta =
+      SLACK_DEBUG && json?.response_metadata
+        ? ` response_metadata=${JSON.stringify(json.response_metadata)}`
+        : "";
+    const paramsSummary = SLACK_DEBUG ? ` params=${JSON.stringify(redactSlackPayload(params))}` : "";
     throw new Error(
-      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided} params=${JSON.stringify(
-        redactSlackPayload(params)
-      )}${meta}`
+      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided}${paramsSummary}${meta}`
     );
   }
   return json;
@@ -413,6 +423,40 @@ export async function enableAgentInSlack(input: {
 const processedEventIds = new Set<string>();
 const MAX_EVENT_IDS = 5000;
 
+// Track threads where the app was mentioned, so follow-up replies in that thread can be handled
+// even if the user doesn't mention the bot again.
+type SubscribedThread = {
+  clientId: string;
+  teamId: string;
+  botKey: string;
+  channel: string;
+  threadTs: string;
+  agentId: string;
+  subscribedAtMs: number;
+  expiresAtMs: number;
+};
+const subscribedThreads = new Map<string, SubscribedThread>();
+const THREAD_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function threadKey(t: { teamId: string; botKey: string; channel: string; threadTs: string }): string {
+  return `${t.teamId}:${t.botKey}:${t.channel}:${t.threadTs}`;
+}
+
+function subscribeThread(t: Omit<SubscribedThread, "subscribedAtMs" | "expiresAtMs">) {
+  const now = Date.now();
+  subscribedThreads.set(threadKey(t), {
+    ...t,
+    subscribedAtMs: now,
+    expiresAtMs: now + THREAD_TTL_MS,
+  });
+  // best-effort prune
+  if (subscribedThreads.size > 5000) {
+    for (const [k, v] of subscribedThreads) {
+      if (v.expiresAtMs < now) subscribedThreads.delete(k);
+    }
+  }
+}
+
 function isDuplicateEvent(eventId: string): boolean {
   if (!eventId) return false;
   if (processedEventIds.has(eventId)) return true; // already seen = duplicate
@@ -455,6 +499,25 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
     return;
   }
 
+  // Follow-up thread replies in channels/groups: handle only if we were previously @mentioned in the thread.
+  if (
+    event.type === "message" &&
+    (event.channel_type === "channel" || event.channel_type === "group") &&
+    typeof event.thread_ts === "string" &&
+    event.thread_ts &&
+    !event.subtype
+  ) {
+    await handleSubscribedThreadReply({
+      installation,
+      channel: event.channel,
+      user: event.user,
+      text: event.text ?? "",
+      ts: event.ts,
+      threadTs: event.thread_ts,
+    });
+    return;
+  }
+
   if (event.type === "app_mention") {
     await handleAppMention({
       installation,
@@ -462,6 +525,7 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
       user: event.user,
       text: event.text ?? "",
       ts: event.ts,
+      threadTs: event.thread_ts ?? undefined,
     });
     return;
   }
@@ -498,7 +562,7 @@ async function handleDirectMessage(input: {
   );
 
   if (docLike) {
-    console.log("[slack] routing message to task flow (doc-like request)");
+    slackDebugLog("[slack] routing message to task flow (doc-like request)");
     await runTaskAndReply({
       installation: input.installation,
       agentLink: link,
@@ -519,7 +583,7 @@ async function handleDirectMessage(input: {
   });
 
   if (conversational.type === "chat") {
-    console.log("[slack] routing message to conversational reply");
+    slackDebugLog("[slack] routing message to conversational reply");
     await slackApi(input.installation.bot_access_token, "chat.postMessage", {
       channel: input.channel,
       thread_ts: input.ts,
@@ -530,7 +594,7 @@ async function handleDirectMessage(input: {
     return;
   }
 
-  console.log("[slack] routing message to task flow");
+  slackDebugLog("[slack] routing message to task flow");
   await runTaskAndReply({
     installation: input.installation,
     agentLink: link,
@@ -548,6 +612,7 @@ async function handleAppMention(input: {
   user: string;
   text: string;
   ts: string;
+  threadTs?: string;
 }) {
   const cleaned = normalizeSlackText(input.text);
   if (!cleaned) return;
@@ -570,16 +635,28 @@ async function handleAppMention(input: {
   const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
   if (!agent) return;
 
+  // Mark this thread as "subscribed" for follow-up replies without needing another @mention.
+  const actualThreadTs = input.threadTs ?? input.ts;
+  subscribeThread({
+    clientId: input.installation.client_id,
+    teamId: input.installation.team_id,
+    botKey,
+    channel: input.channel,
+    threadTs: actualThreadTs,
+    agentId: link.agent_id,
+  });
+
+  const replyThreadTs = input.threadTs ?? input.ts;
   const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
     cleaned
   );
   if (docLike) {
-    console.log("[slack] routing mention to task flow (doc-like request)");
+    slackDebugLog("[slack] routing mention to task flow (doc-like request)");
     await runTaskAndReply({
       installation: input.installation,
       agentLink: link,
       channel: input.channel,
-      threadTs: input.ts,
+      threadTs: replyThreadTs,
       taskText: cleaned,
       forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
       requestUserId: input.user,
@@ -595,10 +672,10 @@ async function handleAppMention(input: {
   });
 
   if (conversational.type === "chat") {
-    console.log("[slack] routing mention to conversational reply");
+    slackDebugLog("[slack] routing mention to conversational reply");
     await slackApi(input.installation.bot_access_token, "chat.postMessage", {
       channel: input.channel,
-      thread_ts: input.ts,
+      thread_ts: replyThreadTs,
       text: conversational.reply,
       username: link.display_name,
       icon_url: link.icon_url ?? undefined,
@@ -606,14 +683,72 @@ async function handleAppMention(input: {
     return;
   }
 
-  console.log("[slack] routing mention to task flow");
+  slackDebugLog("[slack] routing mention to task flow");
   await runTaskAndReply({
     installation: input.installation,
     agentLink: link,
     channel: input.channel,
-    threadTs: input.ts,
+    threadTs: replyThreadTs,
     taskText: cleaned,
     forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
+    requestUserId: input.user,
+  });
+}
+
+async function handleSubscribedThreadReply(input: {
+  installation: SlackInstallationRow;
+  channel: string;
+  user: string;
+  text: string;
+  ts: string;
+  threadTs: string;
+}) {
+  const botKey = (input.installation as any).bot_key ?? "orchest";
+  const key = threadKey({
+    teamId: input.installation.team_id,
+    botKey,
+    channel: input.channel,
+    threadTs: input.threadTs,
+  });
+  const sub = subscribedThreads.get(key);
+  if (!sub) return;
+  if (sub.expiresAtMs < Date.now()) {
+    subscribedThreads.delete(key);
+    return;
+  }
+
+  // Ignore message subtypes (edits, join/leave, etc).
+  // (These come through as message events with a subtype.)
+  // Our handleSlackEvent already filtered bot messages.
+  const taskText = normalizeSlackText(input.text);
+  if (!taskText) return;
+
+  // "Clear that this is for them" heuristic: questions / explicit ask / name.
+  const agent = await getAgentByIdScoped(input.installation.client_id, sub.agentId);
+  if (!agent) return;
+  const name = agent.name.toLowerCase();
+  const lower = taskText.toLowerCase();
+  const addressed =
+    lower.startsWith(name) ||
+    lower.includes(` ${name} `) ||
+    /\?$/.test(taskText.trim()) ||
+    /^\s*(can you|could you|please|any chance|would you)\b/i.test(taskText);
+  if (!addressed) return;
+
+  const link = await getSlackAgentLinkByTeamAndBotKey({
+    teamId: input.installation.team_id,
+    botKey,
+  });
+  if (!link || link.agent_id !== sub.agentId) return;
+
+  slackDebugLog("[slack] handling subscribed thread reply", { channel: input.channel, threadTs: input.threadTs });
+  await runTaskAndReply({
+    installation: input.installation,
+    agentLink: link,
+    channel: input.channel,
+    threadTs: input.threadTs,
+    taskText,
+    forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
     requestUserId: input.user,
   });
 }
@@ -846,7 +981,7 @@ async function createSlackCanvasFromMarkdown(input: {
     }
   }
 
-  console.log("[slack] attempting standalone canvas create", {
+  slackDebugLog("[slack] attempting standalone canvas create", {
     titleLen: input.title.length,
     markdownLen: doc.markdown.length,
     channelIdPrefix: input.channelId?.slice(0, 1) ?? null,
@@ -989,7 +1124,7 @@ async function runTaskAndReply(input: {
                   user_ids: [input.requestUserId],
                   access_level: "write",
                 });
-                console.log("[slack] granted user access to canvas", { canvasId: canvas.canvasId });
+                slackDebugLog("[slack] granted user access to canvas", { canvasId: canvas.canvasId });
               } catch (err) {
                 console.error("[slack] canvases.access.set failed", err);
               }
@@ -1012,7 +1147,7 @@ async function runTaskAndReply(input: {
           }
 
           if (canvas.canvasId && !canvas.url) {
-            console.warn("[slack] canvas created but no url (files.info + fallback failed)", {
+            slackDebugLog("[slack] canvas created but no url (files.info + fallback failed)", {
               canvasId: canvas.canvasId,
             });
             await slackApi(input.installation.bot_access_token, "chat.postMessage", {
