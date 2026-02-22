@@ -464,6 +464,7 @@ async function handleDirectMessage(input: {
       threadTs: input.ts,
       taskText,
       forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
+      requestUserId: input.user,
     });
     return;
   }
@@ -495,6 +496,7 @@ async function handleDirectMessage(input: {
     threadTs: input.ts,
     taskText,
     forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
+    requestUserId: input.user,
   });
 }
 
@@ -538,6 +540,7 @@ async function handleAppMention(input: {
       threadTs: input.ts,
       taskText: cleaned,
       forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
+      requestUserId: input.user,
     });
     return;
   }
@@ -569,6 +572,7 @@ async function handleAppMention(input: {
     threadTs: input.ts,
     taskText: cleaned,
     forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
+    requestUserId: input.user,
   });
 }
 
@@ -669,6 +673,7 @@ async function createSlackCanvasFromMarkdown(input: {
   title: string;
   markdown: string;
   channelId?: string;
+  requestUserId?: string;
 }): Promise<{ canvasId: string; url?: string }> {
   const maxMarkdown = 95_000;
   const markdown =
@@ -743,6 +748,7 @@ async function runTaskAndReply(input: {
   threadTs: string;
   taskText: string;
   forceCanvas?: boolean;
+  requestUserId?: string;
 }) {
   const agent = await getAgentByIdScoped(input.installation.client_id, input.agentLink.agent_id);
   if (!agent) return;
@@ -835,16 +841,33 @@ async function runTaskAndReply(input: {
             title,
             markdown: result.summary,
             channelId: input.channel,
+            requestUserId: input.requestUserId,
           });
 
-          if (canvas.url) {
+          if (canvas.canvasId && canvas.url) {
+            // Share link in-thread first (Slack doc: required before canvases.access.set with user_ids).
             await slackApi(input.installation.bot_access_token, "chat.postMessage", {
               channel: input.channel,
               thread_ts: input.threadTs,
-              text: `I put the full write-up in a Canvas: <${canvas.url}|open canvas>.`,
+              text: `I put this in a Canvas: <${canvas.url}|open canvas>.`,
               username: input.agentLink.display_name,
               icon_url: input.agentLink.icon_url ?? undefined,
             });
+
+            // If this was a DM/MPDM, explicitly grant the requesting user access.
+            // Note: Slack requires user_ids (not channel_ids) for D/MPDM.
+            if (input.requestUserId && /^D/.test(input.channel)) {
+              try {
+                await slackApi(input.installation.bot_access_token, "canvases.access.set", {
+                  canvas_id: canvas.canvasId,
+                  user_ids: [input.requestUserId],
+                  access_level: "write",
+                });
+                console.log("[slack] granted user access to canvas", { canvasId: canvas.canvasId });
+              } catch (err) {
+                console.error("[slack] canvases.access.set failed", err);
+              }
+            }
 
             const preview = result.summary.split("\n").slice(0, 12).join("\n") + "\n\n…";
             await postSlackTextChunked({
@@ -856,6 +879,10 @@ async function runTaskAndReply(input: {
               iconUrl: input.agentLink.icon_url ?? undefined,
             });
             return;
+          }
+
+          if (canvas.canvasId && !canvas.url) {
+            console.warn("[slack] canvas created but no url (files.info failed?)", { canvasId: canvas.canvasId });
           }
         } catch (err) {
           console.error("[slack] canvases.create failed; falling back to thread", err);
