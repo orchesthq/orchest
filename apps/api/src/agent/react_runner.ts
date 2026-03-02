@@ -28,6 +28,10 @@ function synthesizeStatusFromToolCalls(calls: Array<{ name: string; arguments: R
   if (!c) return "";
   const name = c.name;
   const args = c.arguments ?? {};
+  if (name === "kb_search") {
+    const q = typeof args.query === "string" ? args.query : "";
+    return q ? `Searching the knowledge base for “${q.slice(0, 60)}”…` : "Searching the knowledge base…";
+  }
   if (name === "github_list_tree") return "Scanning the repo structure…";
   if (name === "github_search_code") {
     const q = typeof args.query === "string" ? args.query : "";
@@ -167,8 +171,10 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   ];
 
   const executed: ExecutedStep[] = [];
+  const usedTools = new Set<string>();
   let toolCalls = 0;
   let didCritique = false;
+  let didForceGrounding = false;
   let lastDraftFinal: string | null = null;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -177,6 +183,29 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
 
     if (resp.type === "final") {
       lastDraftFinal = resp.final;
+
+      // Hard grounding gate: if KB is available and capability requires company grounding,
+      // ensure we executed kb_search at least once before finalizing.
+      const needsKbGrounding =
+        Boolean(input.toolAccess?.kb?.available) &&
+        Array.isArray(input.capabilities) &&
+        input.capabilities.includes("inspect_client_knowledge_base" as any);
+      const hasKbSearch = usedTools.has("kb_search");
+      if (needsKbGrounding && !hasKbSearch && !didForceGrounding) {
+        didForceGrounding = true;
+        messages.push({
+          role: "user",
+          content: [
+            "Before answering, ground this in the client knowledge base.",
+            "Call kb_search now using a concise query derived from the task (5–12 keywords).",
+            "Then answer using the returned snippets with file+line citations.",
+            "If kb_search returns no results, fall back to github_search_code + targeted reads (if available).",
+            "Do not finalize until after you’ve performed this lookup.",
+          ].join("\n"),
+        });
+        continue;
+      }
+
       if (!didCritique) {
         didCritique = true;
         messages.push({ role: "assistant", content: resp.final });
@@ -228,6 +257,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
 
       console.log("[agent][react] tool", { taskId: input.taskId, iteration: i + 1, tool: call.name, ok: toolResult.ok, ms: toolMs });
 
+      usedTools.add(call.name);
       executed.push({ step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`, result: toolResult.message });
 
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(compactToolResultForModel(toolResult)) });

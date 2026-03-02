@@ -395,6 +395,7 @@ export async function classifyCapabilities(input: {
     "- Prefer including respond_in_chat unless the user explicitly wants no chat output.",
     "- If the task is primarily about changing code, include change_code.",
     "- If the task is primarily about producing a standalone doc/spec/options, include write_document.",
+    "- If the task asks about how the user's specific product/company/system works (agents, dashboard, system prompt, memories, internal workflows), include inspect_client_knowledge_base (if available) so the agent grounds answers in company context.",
   ].join("\n");
 
   const user = [
