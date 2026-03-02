@@ -829,6 +829,93 @@ function deriveCanvasTitle(input: { taskText: string; agentName: string }): stri
   return title;
 }
 
+function extractFirstH1(markdown: string): string | null {
+  const lines = String(markdown ?? "").split(/\r?\n/);
+  for (const line of lines) {
+    const m = /^\s*#\s+(.+?)\s*$/.exec(line);
+    if (m?.[1]) return m[1].trim();
+  }
+  return null;
+}
+
+function normalizeCanvasTitle(s: string): string {
+  let t = String(s ?? "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  // Keep it short and avoid raw chatty prompts becoming the title.
+  t = t.replace(/^(hi|hello|hey)\b[,!.\s]*/i, "").trim();
+  if (t.length > 80) t = t.slice(0, 79).trimEnd() + "…";
+  return t;
+}
+
+function extractNumberedOptions(markdown: string): string[] {
+  const lines = String(markdown ?? "").split(/\r?\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    const m = /^\s*(?:\(?\s*\d+\s*\)?\s*[).:-])\s+(.+?)\s*$/.exec(line);
+    if (!m?.[1]) continue;
+    const text = m[1].trim();
+    if (text.length < 3) continue;
+    out.push(text);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+function ensureCanvasDocStructure(input: {
+  title: string;
+  markdown: string;
+  taskText: string;
+}): string {
+  const trimmed = String(input.markdown ?? "").trim();
+  const hasH1 = /^\s*#\s+\S/m.test(trimmed);
+  const hasSummary = /^\s*##\s+Summary\b/im.test(trimmed);
+
+  // If it already looks like a doc with a summary, leave it alone.
+  if (hasH1 && hasSummary) return trimmed;
+
+  const titleLine = `# ${input.title}`.trim();
+  const summaryLines: string[] = [];
+  summaryLines.push("## Summary");
+
+  const opts = extractNumberedOptions(trimmed);
+  if (opts.length > 0) {
+    summaryLines.push("This document covers these options:");
+    for (const o of opts.slice(0, 3)) summaryLines.push(`- ${o}`);
+  } else {
+    const ctx = normalizeCanvasTitle(input.taskText);
+    summaryLines.push(ctx ? ctx : "Context and summary.");
+  }
+
+  const header = [hasH1 ? "" : titleLine, "", ...summaryLines, ""].filter(Boolean).join("\n");
+
+  if (!hasH1) return `${header}\n${trimmed}`.trim();
+
+  // Has H1 but no Summary: insert Summary block after the first H1.
+  const lines = trimmed.split(/\r?\n/);
+  const h1Idx = lines.findIndex((l) => /^\s*#\s+\S/.test(l));
+  if (h1Idx < 0) return `${header}\n${trimmed}`.trim();
+
+  const before = lines.slice(0, h1Idx + 1).join("\n").trimEnd();
+  const after = lines.slice(h1Idx + 1).join("\n").trimStart();
+  return `${before}\n\n${summaryLines.join("\n")}\n\n${after}`.trim();
+}
+
+function buildCanvasTitleAndMarkdown(input: {
+  taskText: string;
+  agentName: string;
+  documentMarkdown: string;
+}): { title: string; markdown: string } {
+  const h1 = extractFirstH1(input.documentMarkdown);
+  const fallback = deriveCanvasTitle({ taskText: input.taskText, agentName: input.agentName });
+  const title = normalizeCanvasTitle(h1 ?? fallback) || `${input.agentName} — Canvas`;
+  const markdown = ensureCanvasDocStructure({
+    title,
+    markdown: input.documentMarkdown,
+    taskText: input.taskText,
+  });
+  return { title, markdown };
+}
+
 function stripCanvasDisclaimers(markdown: string): string {
   const lines = String(markdown ?? "").split(/\r?\n/);
   const out: string[] = [];
@@ -1111,12 +1198,16 @@ async function runTaskAndReply(input: {
 
       if (wantsCanvas || isLong) {
         try {
-          const title = deriveCanvasTitle({ taskText: input.taskText, agentName: agent.name });
           const { conversation, document } = splitSlackConversationAndDocument(result.summary);
+          const { title, markdown } = buildCanvasTitleAndMarkdown({
+            taskText: input.taskText,
+            agentName: agent.name,
+            documentMarkdown: document,
+          });
           const canvas = await createSlackCanvasFromMarkdown({
             token: input.installation.bot_access_token,
             title,
-            markdown: document,
+            markdown,
             channelId: input.channel,
             requestUserId: input.requestUserId,
           });
