@@ -1,13 +1,13 @@
 import type { CapabilityDefinition, CapabilityId } from "./types";
 import { respondInChatCapability } from "./respond_in_chat";
 import { writeDocumentCapability } from "./write_document";
-import { inspectCodebaseCapability } from "./inspect_codebase";
+import { inspectClientKnowledgeBaseCapability } from "./inspect_client_knowledge_base";
 import { changeCodeCapability } from "./change_code";
 
 const ALL: CapabilityDefinition[] = [
   respondInChatCapability,
   writeDocumentCapability,
-  inspectCodebaseCapability,
+  inspectClientKnowledgeBaseCapability,
   changeCodeCapability,
 ];
 

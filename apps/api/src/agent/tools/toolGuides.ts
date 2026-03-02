@@ -10,6 +10,17 @@ export type ToolGuide = {
 
 export const TOOL_GUIDES: ToolGuide[] = [
   {
+    tool: "kb",
+    title: "Knowledge base (company context)",
+    enabled: (a) => a.kb.available,
+    guide: [
+      "Default behavior for company-specific questions:",
+      "- Call kb_search first to ground the answer in company context.",
+      "- Prefer quoting/citing snippets (path + line ranges) over guessing.",
+      "- If kb_search returns no results, fall back to GitHub/code search (if available) or ask for more context.",
+    ].join("\n"),
+  },
+  {
     tool: "github",
     title: "GitHub (code changes)",
     enabled: (a) => a.github.available,

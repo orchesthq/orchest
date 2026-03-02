@@ -1,7 +1,7 @@
-import { getSlackAgentLinkByAgentId } from "../../db/schema";
+import { getSlackAgentLinkByAgentId, listKbSourcesByClientId, getPartnerSetting } from "../../db/schema";
 import { listAgentGitHubConnections } from "../../integrations/github/githubService";
 
-export type ToolId = "github" | "slack";
+export type ToolId = "github" | "slack" | "kb";
 
 export type GitHubAccessLevel = "read" | "pr_only" | "direct_push";
 
@@ -23,9 +23,16 @@ export type SlackToolAccess = {
   displayName: string | null;
 };
 
+export type KbToolAccess = {
+  available: boolean;
+  sourcesCount: number;
+  embeddingsConfigured: boolean;
+};
+
 export type ToolAccessSummary = {
   github: GitHubToolAccess;
   slack: SlackToolAccess;
+  kb: KbToolAccess;
 };
 
 function rankGitHubAccess(level: GitHubAccessLevel): number {
@@ -43,9 +50,11 @@ export async function getToolAccessSummary(input: {
   clientId: string;
   agentId: string;
 }): Promise<ToolAccessSummary> {
-  const [slackLink, ghConnections] = await Promise.all([
+  const [slackLink, ghConnections, kbSources, openai] = await Promise.all([
     getSlackAgentLinkByAgentId({ clientId: input.clientId, agentId: input.agentId }).catch(() => null),
     listAgentGitHubConnections(input.clientId, input.agentId).catch(() => []),
+    listKbSourcesByClientId(input.clientId).catch(() => []),
+    getPartnerSetting({ partner: "openai", key: "default" }).catch(() => null),
   ]);
 
   const gh = (ghConnections ?? []).map((c: any) => ({
@@ -68,7 +77,15 @@ export async function getToolAccessSummary(input: {
     displayName: slackLink ? (String((slackLink as any).display_name ?? "") || null) : null,
   };
 
-  return { github, slack };
+  const sourcesCount = Array.isArray(kbSources) ? kbSources.length : 0;
+  const embeddingsConfigured = Boolean((openai as any)?.settings && (openai as any).settings.apiKey);
+  const kb: KbToolAccess = {
+    available: sourcesCount > 0,
+    sourcesCount,
+    embeddingsConfigured,
+  };
+
+  return { github, slack, kb };
 }
 
 export function formatToolAccessSummary(summary: ToolAccessSummary): string {
@@ -88,6 +105,14 @@ export function formatToolAccessSummary(summary: ToolAccessSummary): string {
     lines.push(`- Chat: Slack linked (bot: ${summary.slack.botKey ?? "unknown"})`);
   } else {
     lines.push("- Chat: Slack not linked");
+  }
+
+  if (summary.kb.available) {
+    lines.push(
+      `- Knowledge base: available (sources: ${summary.kb.sourcesCount}; embeddings: ${summary.kb.embeddingsConfigured ? "configured" : "not configured"})`
+    );
+  } else {
+    lines.push("- Knowledge base: not synced");
   }
 
   return lines.join("\n");

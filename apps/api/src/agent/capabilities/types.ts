@@ -1,10 +1,14 @@
 import type { ToolAccessSummary } from "../tools/toolInventory";
 
-export type CapabilityId = "respond_in_chat" | "write_document" | "inspect_codebase" | "change_code";
+export type CapabilityId =
+  | "respond_in_chat"
+  | "write_document"
+  | "inspect_client_knowledge_base"
+  | "change_code";
 
 export type CapabilityCheckResult =
   | { ok: true }
-  | { ok: false; reason: string; missingTools?: Array<"github" | "slack"> };
+  | { ok: false; reason: string; missingTools?: Array<"github" | "slack" | "kb"> };
 
 export type CapabilityDefinition = {
   id: CapabilityId;
@@ -13,7 +17,7 @@ export type CapabilityDefinition = {
   // Short, high-signal “how to do this well” guide.
   guide: string;
   // Tools that are typically used for this capability (may be optional).
-  relevantTools: Array<"github" | "slack">;
+  relevantTools: Array<"github" | "slack" | "kb">;
   // Returns ok=false if this capability is blocked without certain tools/access.
   check: (ctx: { tools: ToolAccessSummary }) => CapabilityCheckResult;
 };

@@ -16,7 +16,7 @@ export function selectCapabilities(taskText: string): CapabilityId[] {
     t.includes("# ");
 
   if (codeLike) return ["change_code", "respond_in_chat"];
-  if (inspectLike) return ["inspect_codebase", "respond_in_chat"];
+  if (inspectLike) return ["inspect_client_knowledge_base", "respond_in_chat"];
   if (docLike) return ["write_document", "respond_in_chat"];
   return ["respond_in_chat"];
 }
