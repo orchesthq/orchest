@@ -100,6 +100,12 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   const maxIterations = input.maxIterations ?? readIntEnv("ORCHEST_AGENT_MAX_ITERATIONS", 20);
   const maxToolCalls = input.maxToolCalls ?? readIntEnv("ORCHEST_AGENT_MAX_TOOL_CALLS", 30);
   const tools = input.registry.toOpenAiTools();
+  const toolNames = new Set(tools.map((t) => t.function?.name).filter(Boolean) as string[]);
+  const hasGitHubTools =
+    toolNames.has("github_read_file") ||
+    toolNames.has("github_apply_patch") ||
+    toolNames.has("open_pull_request") ||
+    toolNames.has("create_file_and_commit");
 
   const memoryBlock =
     input.memories.length === 0
@@ -109,21 +115,38 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
           .map((m) => `- [${m.memory_type}] ${m.content}`)
           .join("\n");
 
-  const system = [
+  const systemParts: string[] = [
     input.agentSystemPrompt,
     "",
     "You are an autonomous agent completing the user's task.",
     "Make reasonable assumptions for minor details; only ask clarifying questions when you're blocked or when a meaningful choice would change the outcome.",
     "If the request is ambiguous, missing key information, or requires an important choice, ask up to 5 concise clarifying questions and stop (no tool calls).",
-    "If you have enough information, proceed. Use tools when you need to inspect or change the linked GitHub repository.",
-    "CRITICAL GitHub safety rules:",
-    "- Prefer github_apply_patch over create_file_and_commit for existing files (avoid whole-file rewrites).",
-    "- If github_read_file reports truncated=true (or content includes '[truncated]'), do NOT overwrite that file. Use github_read_file_chunk to fetch the needed parts first, then use github_apply_patch.",
-    "- If you can't find something in a large file, use github_find_in_file to locate it (line windows + byte offsets) before reading or editing.",
-    "- Before opening a PR, call github_list_changed_files and confirm the changed files match your intended scope. If not, fix before opening the PR.",
+    "If you have enough information, proceed. Use tools when you need to inspect, verify, or change external systems (code, docs, integrations).",
+    "",
+    "Cursor-quality gate (do this for ANY tools / integrations):",
+    "- Integration-first: prefer modifying the existing codepath/entry point over adding standalone new modules.",
+    "- No dead code: if you add a new file or helper, you MUST wire it into an existing entry point unless the task explicitly asks for a standalone utility.",
+    "- Verification: before making changes, locate the current behavior in the code/tooling. Do not guess.",
+    "- Minimal diffs: prefer patch-style edits that touch the smallest necessary surface area.",
+    "- No surprise test frameworks: do NOT add *.test.* files or new test dependencies unless the repo already has tests set up or the user asked you to add tests.",
+    "- Before proposing a PR/change set, sanity-check that the changes match the intended scope (entry points affected, user-visible behavior).",
+    "",
     "When calling tools, include a short, user-safe status sentence in the assistant message (no hidden reasoning).",
     "If you have enough information, respond with a final user-facing answer.",
-  ].join("\n");
+  ];
+
+  if (hasGitHubTools) {
+    systemParts.push(
+      "",
+      "GitHub safety rules (only apply when using GitHub tools):",
+      "- Prefer github_apply_patch over create_file_and_commit for existing files (avoid whole-file rewrites).",
+      "- If github_read_file reports truncated=true (or content includes '[truncated]'), do NOT overwrite that file. Use github_read_file_chunk to fetch the needed parts first, then use github_apply_patch.",
+      "- If you can't find something in a large file, use github_find_in_file to locate it (line windows + byte offsets) before reading or editing.",
+      "- Before opening a PR, call github_list_changed_files and confirm the changed files match your intended scope. If not, fix before opening the PR."
+    );
+  }
+
+  const system = systemParts.join("\n");
 
   const messages: Array<any> = [
     {
@@ -149,8 +172,14 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
         messages.push({
           role: "user",
           content: [
-            "Before you finalize, do a quick quality check.",
-            "If anything is missing or incorrect, call the appropriate tool(s) to fix it.",
+            "Before you finalize, do a quick quality check against the Cursor-quality gate.",
+            "Checklist:",
+            "- Did you locate the real entry point / current behavior (not guess)?",
+            "- If you added any new helper/module, is it actually wired into an existing codepath?",
+            "- Did you avoid introducing a new test framework or *.test.* file unless explicitly requested?",
+            "- Do the changes match the intended scope (no unrelated edits)?",
+            "",
+            "If anything is missing/incorrect, call the appropriate tool(s) to fix it.",
             "Otherwise, reply with the final answer. Do not mention that you performed a check.",
           ].join("\n"),
         });
