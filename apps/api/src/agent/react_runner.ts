@@ -174,7 +174,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   const usedTools = new Set<string>();
   let toolCalls = 0;
   let didCritique = false;
-  let didForceGrounding = false;
+  let groundingAttempts = 0;
   let lastDraftFinal: string | null = null;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -191,8 +191,15 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
         Array.isArray(input.capabilities) &&
         input.capabilities.includes("inspect_client_knowledge_base" as any);
       const hasKbSearch = usedTools.has("kb_search");
-      if (needsKbGrounding && !hasKbSearch && !didForceGrounding) {
-        didForceGrounding = true;
+      if (needsKbGrounding && !hasKbSearch) {
+        groundingAttempts += 1;
+        if (groundingAttempts > 3) {
+          return {
+            final:
+              "Stopped: client knowledge base grounding was required, but kb_search was not executed after multiple attempts.",
+            executed,
+          };
+        }
         messages.push({
           role: "user",
           content: [
