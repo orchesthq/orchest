@@ -1,6 +1,7 @@
 import { ToolRegistry } from "./registry";
 import { registerGitHubTools } from "./githubTools";
 import { registerKbTools } from "./kbTools";
+import { registerSlackTools } from "./slackTools";
 import { z } from "zod";
 
 export function createDefaultToolRegistry(): ToolRegistry {
@@ -22,6 +23,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
 
   registerGitHubTools(registry);
   registerKbTools(registry);
+  registerSlackTools(registry);
   return registry;
 }
 

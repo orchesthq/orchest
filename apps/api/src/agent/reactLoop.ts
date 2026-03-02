@@ -2,7 +2,7 @@ import { loadAgentMemories } from "./memoryService";
 import { addAgentMemoryScoped, completeTask, failTask, getTaskContextById, updateTaskStatus } from "../db/schema";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
 import { runReActLoop } from "./react_runner";
-import { classifyCapabilities, finalizeAgentSlackResponse } from "../services/openaiService";
+import { classifyCapabilities, finalizeAgentChatResponse } from "../services/openaiService";
 import { getToolAccessSummary } from "./tools/toolInventory";
 import { selectCapabilities } from "./capabilities/selector";
 import { getCapability, listCapabilities } from "./capabilities/capabilityRegistry";
@@ -16,6 +16,7 @@ export type AgentExecutionResult = {
 };
 
 export type RunAgentTaskOptions = {
+  onAck?: () => Promise<void>;
   onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
   onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
 };
@@ -33,10 +34,8 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       limit: 50,
     });
 
-    // Let the Slack layer generate a natural in-character acknowledgement.
-    // We intentionally avoid templated “review context / use tools / summarize” phrasing here.
-    if (options?.onPlanReady) {
-      await options.onPlanReady({ steps: [] });
+    if (options?.onAck) {
+      await options.onAck();
     }
 
     const toolAccess = await getToolAccessSummary({ clientId: ctx.client.id, agentId: ctx.agent.id });
@@ -81,7 +80,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           onProgress: options?.onProgress,
         });
 
-        const finalized = await finalizeAgentSlackResponse({
+        const finalized = await finalizeAgentChatResponse({
           agentName: ctx.agent.name,
           agentRole: ctx.agent.role,
           systemPrompt: ctx.agent.system_prompt,
@@ -117,7 +116,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       onProgress: options?.onProgress,
     });
 
-    const finalized = await finalizeAgentSlackResponse({
+    const finalized = await finalizeAgentChatResponse({
       agentName: ctx.agent.name,
       agentRole: ctx.agent.role,
       systemPrompt: ctx.agent.system_prompt,

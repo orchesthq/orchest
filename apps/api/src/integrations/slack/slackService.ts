@@ -4,7 +4,6 @@ import {
   consumeSlackOauthState,
   createSlackOauthState,
   getAgentByIdScoped,
-  listAgentMemoriesByTypeScoped,
   getSlackAgentLinkByDmChannelId,
   getSlackAgentLinkByTeamAndBotKey,
   getSlackInstallationByClientIdAndBotKey,
@@ -15,10 +14,12 @@ import {
   type SlackAgentLinkRow,
   type SlackInstallationRow,
 } from "../../db/schema";
-import { createTaskForAgentScoped } from "../../db/schema";
-import { runAgentTask } from "../../agent/agentLoop";
-import { generateSlackPlanAck, tryConversationalReply } from "../../services/openaiService";
+import { generatePlanAck } from "../../services/openaiService";
 import { isDbConfigured } from "../../db/client";
+import { slackApi, slackApiGet } from "./slackApiClient";
+import { createSlackTransport } from "./slackTransport";
+import { handleInboundChatMessage } from "../../chat/agentChatOrchestrator";
+import { getThreadSubscription, subscribeThread } from "../../chat/threadSubscriptions";
 
 export class SlackConfigError extends Error {
   constructor(message: string) {
@@ -258,123 +259,6 @@ function timingSafeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aa, bb);
 }
 
-function redactSlackPayload(payload: Record<string, any>): Record<string, any> {
-  // Avoid logging large/private content. Keep only high-signal routing fields.
-  const allow = [
-    "channel",
-    "channel_id",
-    "thread_ts",
-    "ts",
-    "user",
-    "team_id",
-    "canvas_id",
-    "title",
-    "changes",
-    "document_content",
-    "file",
-  ];
-
-  const out: Record<string, any> = {};
-  for (const k of allow) {
-    if (!(k in payload)) continue;
-    const v = payload[k];
-    if (k === "changes" && Array.isArray(v)) {
-      out[k] = { count: v.length, operations: v.map((c: any) => c?.operation).filter(Boolean).slice(0, 10) };
-      continue;
-    }
-    if (k === "document_content" && v && typeof v === "object") {
-      const md = typeof v.markdown === "string" ? v.markdown : "";
-      out[k] = { type: v.type, markdown_length: md.length };
-      continue;
-    }
-    if (typeof v === "string" && v.length > 200) out[k] = v.slice(0, 200) + "…";
-    else out[k] = v;
-  }
-  return out;
-}
-
-async function slackApi(token: string, method: string, payload: Record<string, any>) {
-  const res = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: JSON.stringify(payload),
-  });
-  const reqId = res.headers.get("x-slack-req-id") ?? undefined;
-  const bodyText = await res.text();
-  let json: any;
-  try {
-    json = bodyText ? JSON.parse(bodyText) : {};
-  } catch {
-    throw new Error(
-      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: non-JSON response: ${
-        bodyText ? bodyText.slice(0, 800) : "(empty)"
-      }`
-    );
-  }
-  if (!json?.ok) {
-    const err = String(json?.error ?? "unknown_error");
-    const needed = json?.needed ? ` needed=${String(json.needed)}` : "";
-    const provided = json?.provided ? ` provided=${String(json.provided)}` : "";
-    const detail = SLACK_DEBUG && json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
-    const meta =
-      SLACK_DEBUG && json?.response_metadata
-        ? ` response_metadata=${JSON.stringify(json.response_metadata)}`
-        : "";
-    const payloadSummary = SLACK_DEBUG ? ` payload=${JSON.stringify(redactSlackPayload(payload))}` : "";
-    throw new Error(
-      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided}${payloadSummary}${meta}`
-    );
-  }
-  return json;
-}
-
-async function slackApiGet(token: string, method: string, params: Record<string, any>) {
-  const url = new URL(`https://slack.com/api/${method}`);
-  for (const [k, v] of Object.entries(params ?? {})) {
-    if (v === undefined || v === null) continue;
-    if (Array.isArray(v)) url.searchParams.set(k, v.join(","));
-    else url.searchParams.set(k, String(v));
-  }
-
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  const reqId = res.headers.get("x-slack-req-id") ?? undefined;
-  const bodyText = await res.text();
-  let json: any;
-  try {
-    json = bodyText ? JSON.parse(bodyText) : {};
-  } catch {
-    throw new Error(
-      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: non-JSON response: ${
-        bodyText ? bodyText.slice(0, 800) : "(empty)"
-      }`
-    );
-  }
-  if (!json?.ok) {
-    const err = String(json?.error ?? "unknown_error");
-    const needed = json?.needed ? ` needed=${String(json.needed)}` : "";
-    const provided = json?.provided ? ` provided=${String(json.provided)}` : "";
-    const detail = SLACK_DEBUG && json?.detail ? ` detail=${String(json.detail).slice(0, 500)}` : "";
-    const meta =
-      SLACK_DEBUG && json?.response_metadata
-        ? ` response_metadata=${JSON.stringify(json.response_metadata)}`
-        : "";
-    const paramsSummary = SLACK_DEBUG ? ` params=${JSON.stringify(redactSlackPayload(params))}` : "";
-    throw new Error(
-      `Slack API ${method} failed (${res.status})${reqId ? ` [req ${reqId}]` : ""}: ${err}${detail}${needed}${provided}${paramsSummary}${meta}`
-    );
-  }
-  return json;
-}
-
 export async function enableAgentInSlack(input: {
   clientId: string;
   agentId: string;
@@ -423,40 +307,6 @@ export async function enableAgentInSlack(input: {
 const processedEventIds = new Set<string>();
 const MAX_EVENT_IDS = 5000;
 
-// Track threads where the app was mentioned, so follow-up replies in that thread can be handled
-// even if the user doesn't mention the bot again.
-type SubscribedThread = {
-  clientId: string;
-  teamId: string;
-  botKey: string;
-  channel: string;
-  threadTs: string;
-  agentId: string;
-  subscribedAtMs: number;
-  expiresAtMs: number;
-};
-const subscribedThreads = new Map<string, SubscribedThread>();
-const THREAD_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-
-function threadKey(t: { teamId: string; botKey: string; channel: string; threadTs: string }): string {
-  return `${t.teamId}:${t.botKey}:${t.channel}:${t.threadTs}`;
-}
-
-function subscribeThread(t: Omit<SubscribedThread, "subscribedAtMs" | "expiresAtMs">) {
-  const now = Date.now();
-  subscribedThreads.set(threadKey(t), {
-    ...t,
-    subscribedAtMs: now,
-    expiresAtMs: now + THREAD_TTL_MS,
-  });
-  // best-effort prune
-  if (subscribedThreads.size > 5000) {
-    for (const [k, v] of subscribedThreads) {
-      if (v.expiresAtMs < now) subscribedThreads.delete(k);
-    }
-  }
-}
-
 function isDuplicateEvent(eventId: string): boolean {
   if (!eventId) return false;
   if (processedEventIds.has(eventId)) return true; // already seen = duplicate
@@ -488,13 +338,51 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
   const installation = await getSlackInstallationByTeamIdAndApiAppId({ teamId, apiAppId });
   if (!installation) return;
 
+  const botKey = (installation as any).bot_key ?? "orchest";
+  const accountId = `${installation.team_id}:${botKey}`;
+  const transport = createSlackTransport({ token: installation.bot_access_token });
+
   if (event.type === "message" && event.channel_type === "im") {
-    await handleDirectMessage({
-      installation,
-      channel: event.channel,
-      user: event.user,
-      text: event.text ?? "",
-      ts: event.ts,
+    const link = await getSlackAgentLinkByDmChannelId({
+      teamId: installation.team_id,
+      botKey,
+      dmChannelId: event.channel,
+    });
+    if (!link) {
+      await transport.postMessage({
+        conversationId: event.channel,
+        threadId: event.ts,
+        text: "This workspace is connected, but no agent is enabled in Slack yet. Enable an agent from the Orchest dashboard first.",
+      });
+      return;
+    }
+
+    const taskText = normalizeSlackText(event.text ?? "");
+    if (!taskText) return;
+
+    await handleInboundChatMessage({
+      msg: {
+        surface: "slack",
+        accountId,
+        conversationId: event.channel,
+        threadId: event.ts,
+        senderId: event.user,
+        text: taskText,
+        ts: event.ts,
+        clientId: installation.client_id,
+        agentId: link.agent_id,
+        kind: "dm",
+        addressedToAgent: true,
+        context: {
+          displayName: link.display_name,
+          iconUrl: link.icon_url ?? null,
+          slack_request_user_id: event.user,
+          slack_channel_id: event.channel,
+        },
+      },
+      transport,
+      author: { displayName: link.display_name, iconUrl: link.icon_url ?? null },
+      options: { ackGenerator: generatePlanAck },
     });
     return;
   }
@@ -507,262 +395,118 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
     event.thread_ts &&
     !event.subtype
   ) {
-    await handleSubscribedThreadReply({
-      installation,
-      channel: event.channel,
-      user: event.user,
-      text: event.text ?? "",
-      ts: event.ts,
-      threadTs: event.thread_ts,
+    const sub = getThreadSubscription({
+      surface: "slack",
+      accountId,
+      conversationId: event.channel,
+      threadId: event.thread_ts,
+    });
+    if (!sub) return;
+
+    const taskText = normalizeSlackText(event.text ?? "");
+    if (!taskText) return;
+
+    // "Clear that this is for them" heuristic: questions / explicit ask / name.
+    const agent = await getAgentByIdScoped(installation.client_id, sub.agentId);
+    if (!agent) return;
+    const name = agent.name.toLowerCase();
+    const lower = taskText.toLowerCase();
+    const addressed =
+      lower.startsWith(name) ||
+      lower.includes(` ${name} `) ||
+      /\?$/.test(taskText.trim()) ||
+      /^\s*(can you|could you|please|any chance|would you)\b/i.test(taskText);
+    if (!addressed) return;
+
+    const link = await getSlackAgentLinkByTeamAndBotKey({
+      teamId: installation.team_id,
+      botKey,
+    });
+    if (!link || link.agent_id !== sub.agentId) return;
+
+    slackDebugLog("[slack] handling subscribed thread reply", { channel: event.channel, threadTs: event.thread_ts });
+    await handleInboundChatMessage({
+      msg: {
+        surface: "slack",
+        accountId,
+        conversationId: event.channel,
+        threadId: event.thread_ts,
+        senderId: event.user,
+        text: taskText,
+        ts: event.ts,
+        clientId: installation.client_id,
+        agentId: link.agent_id,
+        kind: "thread_reply",
+        addressedToAgent: true,
+        context: {
+          displayName: link.display_name,
+          iconUrl: link.icon_url ?? null,
+          slack_request_user_id: event.user,
+          slack_channel_id: event.channel,
+        },
+      },
+      transport,
+      author: { displayName: link.display_name, iconUrl: link.icon_url ?? null },
+      options: { ackGenerator: generatePlanAck },
     });
     return;
   }
 
   if (event.type === "app_mention") {
-    await handleAppMention({
-      installation,
-      channel: event.channel,
-      user: event.user,
-      text: event.text ?? "",
-      ts: event.ts,
-      threadTs: event.thread_ts ?? undefined,
+    const cleaned = normalizeSlackText(event.text ?? "");
+    if (!cleaned) return;
+
+    const link = await getSlackAgentLinkByTeamAndBotKey({
+      teamId: installation.team_id,
+      botKey,
+    });
+    if (!link) {
+      await transport.postMessage({
+        conversationId: event.channel,
+        threadId: event.ts,
+        text: "This bot is installed, but no agent is linked to it yet. Enable an agent from the Orchest dashboard first.",
+      });
+      return;
+    }
+
+    // Mark this thread as "subscribed" for follow-up replies without needing another @mention.
+    const actualThreadTs = event.thread_ts ?? event.ts;
+    subscribeThread({
+      surface: "slack",
+      accountId,
+      conversationId: event.channel,
+      threadId: actualThreadTs,
+      clientId: installation.client_id,
+      agentId: link.agent_id,
+    });
+
+    const replyThreadTs = event.thread_ts ?? event.ts;
+    await handleInboundChatMessage({
+      msg: {
+        surface: "slack",
+        accountId,
+        conversationId: event.channel,
+        threadId: replyThreadTs,
+        senderId: event.user,
+        text: cleaned,
+        ts: event.ts,
+        clientId: installation.client_id,
+        agentId: link.agent_id,
+        kind: "mention",
+        addressedToAgent: true,
+        context: {
+          displayName: link.display_name,
+          iconUrl: link.icon_url ?? null,
+          slack_request_user_id: event.user,
+          slack_channel_id: event.channel,
+        },
+      },
+      transport,
+      author: { displayName: link.display_name, iconUrl: link.icon_url ?? null },
+      options: { ackGenerator: generatePlanAck },
     });
     return;
   }
-}
-
-async function handleDirectMessage(input: {
-  installation: SlackInstallationRow;
-  channel: string;
-  user: string;
-  text: string;
-  ts: string;
-}) {
-  const link = await getSlackAgentLinkByDmChannelId({
-    teamId: input.installation.team_id,
-    botKey: (input.installation as any).bot_key ?? "orchest",
-    dmChannelId: input.channel,
-  });
-  if (!link) {
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      text: "This workspace is connected, but no agent is enabled in Slack yet. Enable an agent from the Orchest dashboard first.",
-    });
-    return;
-  }
-
-  const taskText = normalizeSlackText(input.text);
-  if (!taskText) return;
-
-  const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
-  if (!agent) return;
-
-  const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
-    taskText
-  );
-  const questionLike =
-    /\?$/.test(taskText.trim()) ||
-    /\b(what|where|how|why|when|who)\b/i.test(taskText) ||
-    /^\s*(can you|could you|do you know|does it|is it possible|what's|whats|where's|wheres|how's|hows)\b/i.test(
-      taskText
-    );
-
-  if (docLike || questionLike) {
-    slackDebugLog("[slack] routing message to task flow (doc/question request)");
-    await runTaskAndReply({
-      installation: input.installation,
-      agentLink: link,
-      channel: input.channel,
-      threadTs: input.ts,
-      taskText,
-      forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
-      requestUserId: input.user,
-    });
-    return;
-  }
-
-  const conversational = await tryConversationalReply({
-    agentName: agent.name,
-    agentRole: agent.role,
-    systemPrompt: agent.system_prompt,
-    userMessage: taskText,
-  });
-
-  if (conversational.type === "chat") {
-    slackDebugLog("[slack] routing message to conversational reply");
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.ts,
-      text: conversational.reply,
-      username: link.display_name,
-      icon_url: link.icon_url ?? undefined,
-    });
-    return;
-  }
-
-  slackDebugLog("[slack] routing message to task flow");
-  await runTaskAndReply({
-    installation: input.installation,
-    agentLink: link,
-    channel: input.channel,
-    threadTs: input.ts,
-    taskText,
-    forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
-    requestUserId: input.user,
-  });
-}
-
-async function handleAppMention(input: {
-  installation: SlackInstallationRow;
-  channel: string;
-  user: string;
-  text: string;
-  ts: string;
-  threadTs?: string;
-}) {
-  const cleaned = normalizeSlackText(input.text);
-  if (!cleaned) return;
-
-  const botKey = (input.installation as any).bot_key ?? "orchest";
-  const link = await getSlackAgentLinkByTeamAndBotKey({
-    teamId: input.installation.team_id,
-    botKey,
-  });
-
-  if (!link) {
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.ts,
-      text: "This bot is installed, but no agent is linked to it yet. Enable an agent from the Orchest dashboard first.",
-    });
-    return;
-  }
-
-  const agent = await getAgentByIdScoped(input.installation.client_id, link.agent_id);
-  if (!agent) return;
-
-  // Mark this thread as "subscribed" for follow-up replies without needing another @mention.
-  const actualThreadTs = input.threadTs ?? input.ts;
-  subscribeThread({
-    clientId: input.installation.client_id,
-    teamId: input.installation.team_id,
-    botKey,
-    channel: input.channel,
-    threadTs: actualThreadTs,
-    agentId: link.agent_id,
-  });
-
-  const replyThreadTs = input.threadTs ?? input.ts;
-  const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
-    cleaned
-  );
-  const questionLike =
-    /\?$/.test(cleaned.trim()) ||
-    /\b(what|where|how|why|when|who)\b/i.test(cleaned) ||
-    /^\s*(can you|could you|do you know|does it|is it possible|what's|whats|where's|wheres|how's|hows)\b/i.test(
-      cleaned
-    );
-  if (docLike || questionLike) {
-    slackDebugLog("[slack] routing mention to task flow (doc/question request)");
-    await runTaskAndReply({
-      installation: input.installation,
-      agentLink: link,
-      channel: input.channel,
-      threadTs: replyThreadTs,
-      taskText: cleaned,
-      forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
-      requestUserId: input.user,
-    });
-    return;
-  }
-
-  const conversational = await tryConversationalReply({
-    agentName: agent.name,
-    agentRole: agent.role,
-    systemPrompt: agent.system_prompt,
-    userMessage: cleaned,
-  });
-
-  if (conversational.type === "chat") {
-    slackDebugLog("[slack] routing mention to conversational reply");
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: replyThreadTs,
-      text: conversational.reply,
-      username: link.display_name,
-      icon_url: link.icon_url ?? undefined,
-    });
-    return;
-  }
-
-  slackDebugLog("[slack] routing mention to task flow");
-  await runTaskAndReply({
-    installation: input.installation,
-    agentLink: link,
-    channel: input.channel,
-    threadTs: replyThreadTs,
-    taskText: cleaned,
-    forceCanvas: /\b(canvas|canvases)\b/i.test(cleaned),
-    requestUserId: input.user,
-  });
-}
-
-async function handleSubscribedThreadReply(input: {
-  installation: SlackInstallationRow;
-  channel: string;
-  user: string;
-  text: string;
-  ts: string;
-  threadTs: string;
-}) {
-  const botKey = (input.installation as any).bot_key ?? "orchest";
-  const key = threadKey({
-    teamId: input.installation.team_id,
-    botKey,
-    channel: input.channel,
-    threadTs: input.threadTs,
-  });
-  const sub = subscribedThreads.get(key);
-  if (!sub) return;
-  if (sub.expiresAtMs < Date.now()) {
-    subscribedThreads.delete(key);
-    return;
-  }
-
-  // Ignore message subtypes (edits, join/leave, etc).
-  // (These come through as message events with a subtype.)
-  // Our handleSlackEvent already filtered bot messages.
-  const taskText = normalizeSlackText(input.text);
-  if (!taskText) return;
-
-  // "Clear that this is for them" heuristic: questions / explicit ask / name.
-  const agent = await getAgentByIdScoped(input.installation.client_id, sub.agentId);
-  if (!agent) return;
-  const name = agent.name.toLowerCase();
-  const lower = taskText.toLowerCase();
-  const addressed =
-    lower.startsWith(name) ||
-    lower.includes(` ${name} `) ||
-    /\?$/.test(taskText.trim()) ||
-    /^\s*(can you|could you|please|any chance|would you)\b/i.test(taskText);
-  if (!addressed) return;
-
-  const link = await getSlackAgentLinkByTeamAndBotKey({
-    teamId: input.installation.team_id,
-    botKey,
-  });
-  if (!link || link.agent_id !== sub.agentId) return;
-
-  slackDebugLog("[slack] handling subscribed thread reply", { channel: input.channel, threadTs: input.threadTs });
-  await runTaskAndReply({
-    installation: input.installation,
-    agentLink: link,
-    channel: input.channel,
-    threadTs: input.threadTs,
-    taskText,
-    forceCanvas: /\b(canvas|canvases)\b/i.test(taskText),
-    requestUserId: input.user,
-  });
 }
 
 function normalizeSlackText(text: string): string {
@@ -770,529 +514,5 @@ function normalizeSlackText(text: string): string {
     .replace(/<@[A-Z0-9]+>/g, "") // strip mention tokens
     .replace(/\s+/g, " ")
     .trim();
-}
-
-async function fetchThreadContext(input: {
-  token: string;
-  channel: string;
-  threadTs: string;
-}): Promise<string> {
-  try {
-    const json = await slackApi(input.token, "conversations.replies", {
-      channel: input.channel,
-      ts: input.threadTs,
-      limit: 12,
-      inclusive: true,
-    });
-
-    const messages: any[] = Array.isArray(json?.messages) ? json.messages : [];
-    let source = messages;
-
-    // If there's no actual thread (just the triggering message), fall back to channel history so the
-    // agent maintains context in channels where people don't use threads.
-    if (messages.length <= 1) {
-      try {
-        const hist = await slackApi(input.token, "conversations.history", {
-          channel: input.channel,
-          latest: input.threadTs,
-          inclusive: true,
-          limit: 12,
-        });
-        const hm: any[] = Array.isArray(hist?.messages) ? hist.messages : [];
-        if (hm.length > 1) source = hm.reverse(); // oldest → newest
-      } catch {
-        // ignore
-      }
-    }
-
-    const lines = source
-      .filter((m) => typeof m?.text === "string" && m.text.trim().length > 0)
-      .slice(-10)
-      .map((m) => {
-        const who = m.bot_id || m.subtype === "bot_message" ? "assistant" : "user";
-        const t = normalizeSlackText(String(m.text));
-        return `${who}: ${t}`;
-      });
-
-    if (lines.length === 0) return "";
-    return ["", "Thread context (most recent):", ...lines].join("\n");
-  } catch {
-    return "";
-  }
-}
-
-function deriveCanvasTitle(input: { taskText: string; agentName: string }): string {
-  const raw = String(input.taskText ?? "").replace(/\s+/g, " ").trim();
-  const lower = raw.toLowerCase();
-  let title = "";
-
-  if (lower.includes("intro") || lower.includes("introduction") || lower.includes("about yourself") || lower.includes("about you")) {
-    title = `Introduction — ${input.agentName}`;
-  } else if (lower.includes("how to work with")) {
-    title = `How to work with ${input.agentName}`;
-  } else if (lower.includes("canvas")) {
-    title = `${input.agentName} — Canvas`;
-  } else {
-    title = raw.slice(0, 80) || `${input.agentName} — Canvas`;
-  }
-
-  // Slack title length guardrail.
-  if (title.length > 120) title = title.slice(0, 120);
-  return title;
-}
-
-function extractFirstH1(markdown: string): string | null {
-  const lines = String(markdown ?? "").split(/\r?\n/);
-  for (const line of lines) {
-    const m = /^\s*#\s+(.+?)\s*$/.exec(line);
-    if (m?.[1]) return m[1].trim();
-  }
-  return null;
-}
-
-function normalizeCanvasTitle(s: string): string {
-  let t = String(s ?? "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!t) return "";
-  // Keep it short and avoid raw chatty prompts becoming the title.
-  t = t.replace(/^(hi|hello|hey)\b[,!.\s]*/i, "").trim();
-  if (t.length > 80) t = t.slice(0, 79).trimEnd() + "…";
-  return t;
-}
-
-function extractNumberedOptions(markdown: string): string[] {
-  const lines = String(markdown ?? "").split(/\r?\n/);
-  const out: string[] = [];
-  for (const line of lines) {
-    const m = /^\s*(?:\(?\s*\d+\s*\)?\s*[).:-])\s+(.+?)\s*$/.exec(line);
-    if (!m?.[1]) continue;
-    const text = m[1].trim();
-    if (text.length < 3) continue;
-    out.push(text);
-    if (out.length >= 5) break;
-  }
-  return out;
-}
-
-function ensureCanvasDocStructure(input: {
-  title: string;
-  markdown: string;
-  taskText: string;
-}): string {
-  const trimmed = String(input.markdown ?? "").trim();
-  const hasH1 = /^\s*#\s+\S/m.test(trimmed);
-  const hasSummary = /^\s*##\s+Summary\b/im.test(trimmed);
-
-  // If it already looks like a doc with a summary, leave it alone.
-  if (hasH1 && hasSummary) return trimmed;
-
-  const titleLine = `# ${input.title}`.trim();
-  const summaryLines: string[] = [];
-  summaryLines.push("## Summary");
-
-  const opts = extractNumberedOptions(trimmed);
-  if (opts.length > 0) {
-    summaryLines.push("This document covers these options:");
-    for (const o of opts.slice(0, 3)) summaryLines.push(`- ${o}`);
-  } else {
-    const ctx = normalizeCanvasTitle(input.taskText);
-    summaryLines.push(ctx ? ctx : "Context and summary.");
-  }
-
-  const header = [hasH1 ? "" : titleLine, "", ...summaryLines, ""].filter(Boolean).join("\n");
-
-  if (!hasH1) return `${header}\n${trimmed}`.trim();
-
-  // Has H1 but no Summary: insert Summary block after the first H1.
-  const lines = trimmed.split(/\r?\n/);
-  const h1Idx = lines.findIndex((l) => /^\s*#\s+\S/.test(l));
-  if (h1Idx < 0) return `${header}\n${trimmed}`.trim();
-
-  const before = lines.slice(0, h1Idx + 1).join("\n").trimEnd();
-  const after = lines.slice(h1Idx + 1).join("\n").trimStart();
-  return `${before}\n\n${summaryLines.join("\n")}\n\n${after}`.trim();
-}
-
-function buildCanvasTitleAndMarkdown(input: {
-  taskText: string;
-  agentName: string;
-  documentMarkdown: string;
-}): { title: string; markdown: string } {
-  const h1 = extractFirstH1(input.documentMarkdown);
-  const fallback = deriveCanvasTitle({ taskText: input.taskText, agentName: input.agentName });
-  const title = normalizeCanvasTitle(h1 ?? fallback) || `${input.agentName} — Canvas`;
-  const markdown = ensureCanvasDocStructure({
-    title,
-    markdown: input.documentMarkdown,
-    taskText: input.taskText,
-  });
-  return { title, markdown };
-}
-
-function stripCanvasDisclaimers(markdown: string): string {
-  const lines = String(markdown ?? "").split(/\r?\n/);
-  const out: string[] = [];
-  let droppedLeading = 0;
-
-  const isDisclaimerLine = (s: string) =>
-    /can'?t\s+directly\s+create\s+.*canvas/i.test(s) ||
-    /no\s+slack\s+(ui|api)\s+access/i.test(s) ||
-    /paste-?ready/i.test(s) ||
-    /copy\/paste/i.test(s);
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (out.length === 0 && droppedLeading < 12 && trimmed && isDisclaimerLine(trimmed)) {
-      droppedLeading += 1;
-      continue;
-    }
-    out.push(line);
-  }
-
-  // Also drop an immediate following blank line block if we dropped something.
-  while (droppedLeading > 0 && out.length > 0 && out[0]?.trim() === "") out.shift();
-  return out.join("\n").trim();
-}
-
-function splitSlackConversationAndDocument(markdown: string): { conversation: string; document: string } {
-  const cleaned = stripCanvasDisclaimers(markdown);
-  const lines = cleaned.split(/\r?\n/);
-
-  // Document should start at the first markdown heading. Encourage agents to start docs with "# ..."
-  const headingIdx = lines.findIndex((l) => /^\s{0,3}#{1,6}\s+\S/.test(l));
-  if (headingIdx <= 0) {
-    // If there's no heading, treat everything as the document and keep conversation empty.
-    return { conversation: "", document: cleaned };
-  }
-
-  const convo = lines.slice(0, headingIdx).join("\n").trim();
-  const doc = lines.slice(headingIdx).join("\n").trim();
-  return { conversation: convo, document: doc || cleaned };
-}
-
-function slackMrkdwnFromMarkdown(text: string): string {
-  let s = String(text ?? "");
-  // Headings: "## Title" -> "*Title*"
-  s = s
-    .split("\n")
-    .map((line) => {
-      const m = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
-      if (!m) return line;
-      const title = (m[2] ?? "").trim();
-      return title ? `*${title}*` : line;
-    })
-    .join("\n");
-
-  // Bold: **text** -> *text*
-  s = s.replace(/\*\*(.+?)\*\*/g, "*$1*");
-
-  // Horizontal rules / separators.
-  s = s.replace(/^\s*---\s*$/gm, "────────");
-
-  return s.trim();
-}
-
-async function postSlackTextChunked(input: {
-  token: string;
-  channel: string;
-  threadTs?: string;
-  text: string;
-  username?: string;
-  iconUrl?: string;
-}) {
-  const maxLen = 3500;
-  const raw = slackMrkdwnFromMarkdown(String(input.text ?? ""));
-  const chunks: string[] = [];
-  let remaining = raw;
-  while (remaining.length > maxLen) {
-    // Prefer splitting on paragraph boundaries.
-    let idx = remaining.lastIndexOf("\n\n", maxLen);
-    if (idx < 500) idx = remaining.lastIndexOf("\n", maxLen);
-    if (idx < 500) idx = maxLen;
-    chunks.push(remaining.slice(0, idx).trim());
-    remaining = remaining.slice(idx).trim();
-  }
-  if (remaining.trim()) chunks.push(remaining.trim());
-
-  for (const c of chunks) {
-    await slackApi(input.token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.threadTs,
-      text: c,
-      username: input.username,
-      icon_url: input.iconUrl,
-    });
-  }
-}
-
-async function createSlackCanvasFromMarkdown(input: {
-  token: string;
-  title: string;
-  markdown: string;
-  channelId?: string;
-  requestUserId?: string;
-}): Promise<{ canvasId: string; url?: string }> {
-  const maxMarkdown = 95_000;
-  const markdown =
-    input.markdown.length > maxMarkdown ? input.markdown.slice(0, maxMarkdown) + "\n\n[truncated]" : input.markdown;
-  const doc = { type: "markdown", markdown };
-
-  const tryFilesInfo = async (canvasId: string): Promise<{ canvasId: string; url?: string }> => {
-    try {
-      const info = await slackApiGet(input.token, "files.info", { file: canvasId });
-      const url: string | undefined = info?.file?.permalink;
-      return { canvasId, url };
-    } catch (err) {
-      console.error("[slack] files.info failed for canvas", err);
-      return { canvasId };
-    }
-  };
-
-  const tryBuildCanvasUrl = async (canvasId: string): Promise<string | undefined> => {
-    // Fallback: construct a docs URL using the workspace URL from auth.test.
-    // Slack canvas examples use: https://<workspace>.slack.com/docs/<TEAM_ID>/<CANVAS_ID>
-    try {
-      const auth = await slackApiGet(input.token, "auth.test", {});
-      const baseUrl: string | undefined = auth?.url;
-      const teamId: string | undefined = auth?.team_id;
-      if (!baseUrl || !teamId) return undefined;
-      return `${String(baseUrl).replace(/\/+$/, "")}/docs/${teamId}/${canvasId}`;
-    } catch (err) {
-      console.error("[slack] auth.test failed while building canvas url", err);
-      return undefined;
-    }
-  };
-
-  const isChannel = Boolean(input.channelId && /^[CG]/.test(input.channelId));
-
-  // Prefer a conversation canvas for channels (more reliable permissions model than standalone canvases for apps).
-  if (input.channelId && isChannel) {
-    try {
-      const created = await slackApi(input.token, "conversations.canvases.create", {
-        channel_id: input.channelId,
-        title: input.title,
-        document_content: doc,
-      });
-      const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
-      if (canvasId) return await tryFilesInfo(canvasId);
-    } catch (err) {
-      // If a canvas already exists for this channel, update it in-place.
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/channel_canvas_already_exists/i.test(msg)) {
-        const info = await slackApi(input.token, "conversations.info", { channel: input.channelId });
-        const existing: string | undefined =
-          info?.channel?.properties?.canvas?.file_id ??
-          info?.channel?.properties?.canvas?.id ??
-          info?.channel?.properties?.canvas ??
-          undefined;
-        if (existing) {
-          await slackApi(input.token, "canvases.edit", {
-            canvas_id: existing,
-            changes: [{ operation: "replace", document_content: doc }],
-          });
-          return await tryFilesInfo(existing);
-        }
-      }
-      // Fall through to standalone canvas attempt below.
-    }
-  }
-
-  slackDebugLog("[slack] attempting standalone canvas create", {
-    titleLen: input.title.length,
-    markdownLen: doc.markdown.length,
-    channelIdPrefix: input.channelId?.slice(0, 1) ?? null,
-  });
-  const created = await slackApi(input.token, "canvases.create", {
-    title: input.title,
-    document_content: doc,
-    // If we have a real channel id, attach it so access is inherited.
-    channel_id: isChannel ? input.channelId : undefined,
-  });
-
-  const canvasId: string | undefined = created?.canvas_id ?? created?.canvas?.id ?? created?.id;
-  if (!canvasId) return { canvasId: "" };
-  const info = await tryFilesInfo(canvasId);
-  if (info.url) return info;
-  const fallback = await tryBuildCanvasUrl(canvasId);
-  return { canvasId, url: fallback };
-}
-
-async function runTaskAndReply(input: {
-  installation: SlackInstallationRow;
-  agentLink: SlackAgentLinkRow;
-  channel: string;
-  threadTs: string;
-  taskText: string;
-  forceCanvas?: boolean;
-  requestUserId?: string;
-}) {
-  const agent = await getAgentByIdScoped(input.installation.client_id, input.agentLink.agent_id);
-  if (!agent) return;
-
-  const profileMemories = await listAgentMemoriesByTypeScoped({
-    clientId: input.installation.client_id,
-    agentId: agent.id,
-    memoryType: "profile",
-    limit: 10,
-  }).catch(() => []);
-
-  const threadContext = await fetchThreadContext({
-    token: input.installation.bot_access_token,
-    channel: input.channel,
-    threadTs: input.threadTs,
-  });
-
-  const task = await createTaskForAgentScoped({
-    clientId: input.installation.client_id,
-    agentId: agent.id,
-    taskInput: `${input.taskText}${threadContext}`,
-  });
-
-  let postedProgressHeader = false;
-  const postProgress = async (text: string) => {
-    if (!text) return;
-    if (!postedProgressHeader) {
-      postedProgressHeader = true;
-      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-        channel: input.channel,
-        thread_ts: input.threadTs,
-        text: "I’ll share quick progress notes in this thread as I work.",
-        username: input.agentLink.display_name,
-        icon_url: input.agentLink.icon_url ?? undefined,
-      });
-    }
-    const italic = "_" + String(text).replace(/_/g, "\\_").trim() + "_";
-    await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-      channel: input.channel,
-      thread_ts: input.threadTs,
-      text: italic,
-      username: input.agentLink.display_name,
-      icon_url: input.agentLink.icon_url ?? undefined,
-    });
-  };
-
-  const formatPlanForUser = async (plan: { steps: string[]; notes?: string }): Promise<string> => {
-    const ack = await generateSlackPlanAck({
-      agentName: agent.name,
-      agentRole: agent.role,
-      systemPrompt: agent.system_prompt,
-      taskText: input.taskText,
-      plan,
-      profileMemories: profileMemories.map((m) => m.content),
-    }).catch(() => null);
-    if (ack) return ack;
-
-    // Fallback only if LLM call fails.
-    if (plan.steps.length === 0) return "On it.";
-    const steps = plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-    return `On it.\n\nPlan:\n${steps}`;
-  };
-
-  void runAgentTask(task.id, {
-    onPlanReady: async (plan) => {
-      await postSlackTextChunked({
-        token: input.installation.bot_access_token,
-        channel: input.channel,
-        threadTs: input.threadTs,
-        text: await formatPlanForUser(plan),
-        username: input.agentLink.display_name,
-        iconUrl: input.agentLink.icon_url ?? undefined,
-      });
-    },
-    onProgress: async (u) => {
-      if (!u.text) return;
-      await postProgress(u.text);
-    },
-  })
-    .then(async (result) => {
-      const wantsCanvas =
-        Boolean(input.forceCanvas) || /\b(canvas|canvases)\b/i.test(input.taskText) || /\bslack canvas\b/i.test(input.taskText);
-      const isLong = result.summary.length > 2500 || result.summary.split("\n").length > 60;
-
-      if (wantsCanvas || isLong) {
-        try {
-          const { conversation, document } = splitSlackConversationAndDocument(result.summary);
-          const { title, markdown } = buildCanvasTitleAndMarkdown({
-            taskText: input.taskText,
-            agentName: agent.name,
-            documentMarkdown: document,
-          });
-          const canvas = await createSlackCanvasFromMarkdown({
-            token: input.installation.bot_access_token,
-            title,
-            markdown,
-            channelId: input.channel,
-            requestUserId: input.requestUserId,
-          });
-
-          if (canvas.canvasId && canvas.url) {
-            const intro = conversation.trim();
-            const linkLine = `I’ve put the full details in this document: <${canvas.url}|open canvas>.`;
-
-            // Share in-thread: conversational intro + link.
-            await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-              channel: input.channel,
-              thread_ts: input.threadTs,
-              text: intro ? `${intro}\n\n${linkLine}` : linkLine,
-              username: input.agentLink.display_name,
-              icon_url: input.agentLink.icon_url ?? undefined,
-            });
-
-            // If this was a DM/MPDM, explicitly grant the requesting user access.
-            // Note: Slack requires user_ids (not channel_ids) for D/MPDM.
-            if (input.requestUserId && /^D/.test(input.channel)) {
-              try {
-                await slackApi(input.installation.bot_access_token, "canvases.access.set", {
-                  canvas_id: canvas.canvasId,
-                  user_ids: [input.requestUserId],
-                  access_level: "write",
-                });
-                slackDebugLog("[slack] granted user access to canvas", { canvasId: canvas.canvasId });
-              } catch (err) {
-                console.error("[slack] canvases.access.set failed", err);
-              }
-            }
-
-            // Don't paste document excerpts into chat; keep Slack conversational and the Canvas as reference.
-            return;
-          }
-
-          if (canvas.canvasId && !canvas.url) {
-            slackDebugLog("[slack] canvas created but no url (files.info + fallback failed)", {
-              canvasId: canvas.canvasId,
-            });
-            await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-              channel: input.channel,
-              thread_ts: input.threadTs,
-              text:
-                "I created a Canvas, but Slack didn’t give me a permalink to share. " +
-                `Canvas id: ${canvas.canvasId}. This often means the token is missing \`files:read\` scope or your workspace plan restricts Canvas APIs.`,
-              username: input.agentLink.display_name,
-              icon_url: input.agentLink.icon_url ?? undefined,
-            });
-          }
-        } catch (err) {
-          console.error("[slack] canvases.create failed; falling back to thread", err);
-        }
-      }
-
-      await postSlackTextChunked({
-        token: input.installation.bot_access_token,
-        channel: input.channel,
-        threadTs: input.threadTs,
-        text: result.summary,
-        username: input.agentLink.display_name,
-        iconUrl: input.agentLink.icon_url ?? undefined,
-      });
-    })
-    .catch(async (err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      await slackApi(input.installation.bot_access_token, "chat.postMessage", {
-        channel: input.channel,
-        thread_ts: input.threadTs,
-        text: `I hit an error while running that: ${msg}`,
-        username: input.agentLink.display_name,
-        icon_url: input.agentLink.icon_url ?? undefined,
-      });
-    });
 }
 

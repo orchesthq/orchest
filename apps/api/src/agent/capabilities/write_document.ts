@@ -9,6 +9,7 @@ export const writeDocumentCapability: CapabilityDefinition = {
     "- A clear title (H1) that is NOT the raw prompt.",
     "- A short Summary section that defines key terms/options referenced later.",
     "- Body sections with headings and bullets; actionable next steps when appropriate.",
+    "- If Slack is available and you need a shareable doc, publish via slack_canvas_publish and keep chat concise (link-only).",
     "",
     "Structure template:",
     "# <Title>",

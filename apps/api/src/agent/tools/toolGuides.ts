@@ -46,6 +46,8 @@ export const TOOL_GUIDES: ToolGuide[] = [
       "- Keep chat replies concise; put long-form content into a structured document.",
       "",
       "Canvas docs:",
+      "- Use the tool `slack_canvas_publish` to publish long documents to a Canvas.",
+      "- After publishing, keep the chat reply short and link to the Canvas. Do NOT paste the full doc into chat.",
       "- Use a clean title (not the raw prompt).",
       "- Start the doc with a Summary section so it stands alone without chat context.",
       "- Use headings and bullets; define any numbered options you reference.",

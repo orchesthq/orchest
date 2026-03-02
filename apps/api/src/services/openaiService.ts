@@ -445,7 +445,7 @@ export async function embedText(input: {
   return { embedding: emb.map((n: any) => Number(n)), model };
 }
 
-export async function generateSlackPlanAck(input: {
+export async function generatePlanAck(input: {
   agentName: string;
   agentRole: string;
   systemPrompt: string;
@@ -468,7 +468,7 @@ export async function generateSlackPlanAck(input: {
   const system = [
     input.systemPrompt,
     "",
-    `You are ${input.agentName} (${input.agentRole}) replying in Slack.`,
+    `You are ${input.agentName} (${input.agentRole}) replying in chat.`,
     "Write a natural, human acknowledgement that you’re starting the task.",
     "Use the agent’s profile memories to shape voice and phrasing. Do not be robotic.",
     "Do not mention internal tooling. Speak like a colleague (e.g. 'I’ll take a look at the repo' not 'I will use tools').",
@@ -503,7 +503,12 @@ export async function generateSlackPlanAck(input: {
   return input.plan.steps.length === 0 ? "On it." : `On it.\n\nPlan:\n${steps}`;
 }
 
-export async function finalizeAgentSlackResponse(input: {
+// Backwards-compatible alias (prefer generatePlanAck).
+export async function generateSlackPlanAck(input: Parameters<typeof generatePlanAck>[0]): Promise<string> {
+  return await generatePlanAck(input);
+}
+
+export async function finalizeAgentChatResponse(input: {
   agentName: string;
   agentRole: string;
   systemPrompt: string;
@@ -528,10 +533,11 @@ export async function finalizeAgentSlackResponse(input: {
   const system = [
     input.systemPrompt,
     "",
-    `You are ${input.agentName} (${input.agentRole}) replying in Slack.`,
+    `You are ${input.agentName} (${input.agentRole}) replying in chat.`,
     "Write the actual deliverable content the user asked for.",
     "Be honest: do NOT claim you reviewed code, accessed repos, or ran tools unless it appears in the executed tool log.",
     "If no tools were executed, say you did not inspect the repo and provide a best-effort design based on the request.",
+    "If you used a document publishing tool (e.g. slack_canvas_publish) and it returned a link, keep the final chat message short and include only the link + a brief intro. Do NOT paste the full document again.",
     "No meta commentary like 'self-check' or 'the result meets the goal'. Just the deliverable.",
   ].join("\n");
 
@@ -548,7 +554,7 @@ export async function finalizeAgentSlackResponse(input: {
     "Draft answer (may be incomplete):",
     input.draft,
     "",
-    "Now write the final Slack response. Use headings and bullets if helpful.",
+    "Now write the final chat response. Use headings and bullets if helpful.",
   ].join("\n");
 
   const json = await chatCompletionRaw(cfg, {
@@ -562,6 +568,13 @@ export async function finalizeAgentSlackResponse(input: {
   const content = json?.choices?.[0]?.message?.content;
   if (typeof content === "string" && content.trim()) return content.trim();
   return input.draft;
+}
+
+// Backwards-compatible alias (prefer finalizeAgentChatResponse).
+export async function finalizeAgentSlackResponse(
+  input: Parameters<typeof finalizeAgentChatResponse>[0]
+): Promise<string> {
+  return await finalizeAgentChatResponse(input);
 }
 
 function safeParseJson(text: string): unknown {

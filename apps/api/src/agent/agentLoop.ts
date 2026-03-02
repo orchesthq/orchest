@@ -23,6 +23,7 @@ export type AgentExecutionResult = {
 };
 
 export type RunAgentTaskOptions = {
+  onAck?: () => Promise<void>;
   onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
   onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
 };
