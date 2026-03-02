@@ -138,6 +138,32 @@ export type PartnerSettingRow = {
   updated_at: string;
 };
 
+export type KbSourceRow = {
+  id: string;
+  client_id: string;
+  provider: "github";
+  repo_full_name: string;
+  ref: string;
+  last_synced_sha: string | null;
+  last_synced_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KbChunkRow = {
+  id: string;
+  client_id: string;
+  source_id: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  content: string;
+  content_hash: string;
+  token_count: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export const DEFAULT_SOFTWARE_ENGINEER_SYSTEM_PROMPT =
   "You are an AI Software Engineer employed by the client. You complete software engineering tasks reliably, communicate clearly, and follow best practices.";
 
@@ -212,6 +238,181 @@ export async function upsertPartnerSetting(input: {
     [partner, key, settingsJson]
   );
   return one(rows, "Failed to upsert partner setting");
+}
+
+export async function upsertKbSource(input: {
+  clientId: string;
+  provider: "github";
+  repoFullName: string;
+  ref: string;
+  lastSyncedSha?: string | null;
+}): Promise<KbSourceRow> {
+  assertUuid(input.clientId, "clientId");
+  const provider = input.provider;
+  const repo = input.repoFullName.trim();
+  const ref = input.ref.trim() || "main";
+  if (!repo) throw new Error("repoFullName is required");
+
+  const { rows } = await query<KbSourceRow>(
+    [
+      "insert into kb_sources (client_id, provider, repo_full_name, ref, last_synced_sha, last_synced_at)",
+      "values ($1, $2, $3, $4, $5, now())",
+      "on conflict (client_id, provider, repo_full_name, ref) do update set",
+      "  last_synced_sha = excluded.last_synced_sha,",
+      "  last_synced_at = now(),",
+      "  updated_at = now()",
+      "returning id, client_id, provider, repo_full_name, ref, last_synced_sha, last_synced_at, created_at, updated_at",
+    ].join("\n"),
+    [input.clientId, provider, repo, ref, input.lastSyncedSha ?? null]
+  );
+  return one(rows, "Failed to upsert KB source");
+}
+
+export async function listKbSourcesByClientId(clientId: string): Promise<KbSourceRow[]> {
+  assertUuid(clientId, "clientId");
+  const { rows } = await query<KbSourceRow>(
+    [
+      "select id, client_id, provider, repo_full_name, ref, last_synced_sha, last_synced_at, created_at, updated_at",
+      "from kb_sources",
+      "where client_id = $1",
+      "order by updated_at desc",
+    ].join("\n"),
+    [clientId]
+  );
+  return rows;
+}
+
+export async function deleteKbChunksForFile(input: {
+  clientId: string;
+  sourceId: string;
+  path: string;
+}): Promise<number> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.sourceId, "sourceId");
+  const p = input.path.trim();
+  if (!p) throw new Error("path is required");
+  const { rows } = await query<{ id: string }>(
+    [
+      "delete from kb_chunks",
+      "where client_id = $1 and source_id = $2 and path = $3",
+      "returning id",
+    ].join("\n"),
+    [input.clientId, input.sourceId, p]
+  );
+  return rows.length;
+}
+
+export async function insertKbChunk(input: {
+  clientId: string;
+  sourceId: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  contentHash: string;
+  embedding?: string | null; // pgvector literal, e.g. "[0.1,0.2,...]"
+  tokenCount?: number | null;
+}): Promise<void> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.sourceId, "sourceId");
+  const p = input.path.trim();
+  if (!p) throw new Error("path is required");
+  if (!input.content) throw new Error("content is required");
+  if (!input.contentHash) throw new Error("contentHash is required");
+
+  await query(
+    [
+      "insert into kb_chunks (client_id, source_id, path, start_line, end_line, content, content_hash, embedding, token_count)",
+      "values ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9)",
+      "on conflict (source_id, path, start_line, end_line) do update set",
+      "  content = excluded.content,",
+      "  content_hash = excluded.content_hash,",
+      "  embedding = excluded.embedding,",
+      "  token_count = excluded.token_count,",
+      "  updated_at = now()",
+    ].join("\n"),
+    [
+      input.clientId,
+      input.sourceId,
+      p,
+      input.startLine,
+      input.endLine,
+      input.content,
+      input.contentHash,
+      input.embedding ?? null,
+      input.tokenCount ?? null,
+    ]
+  );
+}
+
+export async function searchKbChunksByEmbedding(input: {
+  clientId: string;
+  embedding: string; // pgvector literal
+  limit?: number;
+  repoFullName?: string;
+  pathPrefix?: string;
+}): Promise<
+  Array<{
+    source: KbSourceRow;
+    chunk: Pick<KbChunkRow, "id" | "path" | "start_line" | "end_line" | "content">;
+    distance: number;
+  }>
+> {
+  assertUuid(input.clientId, "clientId");
+  const limit = Math.min(Math.max(input.limit ?? 8, 1), 20);
+
+  const repo = input.repoFullName?.trim() || null;
+  const prefix = input.pathPrefix?.trim() || null;
+
+  const where: string[] = ["s.client_id = $2"];
+  const params: any[] = [input.embedding, input.clientId];
+  let idx = 3;
+
+  if (repo) {
+    where.push(`s.repo_full_name = $${idx++}`);
+    params.push(repo);
+  }
+  if (prefix) {
+    where.push(`c.path like $${idx++}`);
+    params.push(prefix.replace(/%/g, "\\%") + "%");
+  }
+
+  const sql = [
+    "select",
+    "  s.id as source_id, s.client_id as source_client_id, s.provider as source_provider, s.repo_full_name as source_repo_full_name, s.ref as source_ref,",
+    "  s.last_synced_sha as source_last_synced_sha, s.last_synced_at as source_last_synced_at, s.created_at as source_created_at, s.updated_at as source_updated_at,",
+    "  c.id as chunk_id, c.path as chunk_path, c.start_line as chunk_start_line, c.end_line as chunk_end_line, c.content as chunk_content,",
+    "  (c.embedding <-> $1::vector) as distance",
+    "from kb_chunks c",
+    "join kb_sources s on s.id = c.source_id",
+    "where " + where.join(" and "),
+    "  and c.embedding is not null",
+    "order by c.embedding <-> $1::vector asc",
+    `limit ${limit}`,
+  ].join("\n");
+
+  const { rows } = await query<any>(sql, params);
+  return rows.map((r) => ({
+    source: {
+      id: r.source_id,
+      client_id: r.source_client_id,
+      provider: r.source_provider,
+      repo_full_name: r.source_repo_full_name,
+      ref: r.source_ref,
+      last_synced_sha: r.source_last_synced_sha,
+      last_synced_at: r.source_last_synced_at,
+      created_at: r.source_created_at,
+      updated_at: r.source_updated_at,
+    } as KbSourceRow,
+    chunk: {
+      id: r.chunk_id,
+      path: r.chunk_path,
+      start_line: Number(r.chunk_start_line),
+      end_line: Number(r.chunk_end_line),
+      content: r.chunk_content,
+    },
+    distance: Number(r.distance),
+  }));
 }
 
 export async function getClientByName(name: string): Promise<ClientRow | null> {

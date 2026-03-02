@@ -1,5 +1,6 @@
 import { ToolRegistry } from "./registry";
 import { registerGitHubTools } from "./githubTools";
+import { registerKbTools } from "./kbTools";
 import { z } from "zod";
 
 export function createDefaultToolRegistry(): ToolRegistry {
@@ -20,6 +21,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
   });
 
   registerGitHubTools(registry);
+  registerKbTools(registry);
   return registry;
 }
 

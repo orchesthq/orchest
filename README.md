@@ -29,6 +29,7 @@ npm install
    - `migrations/009_github_agent_default_repo.sql`
    - `migrations/010_partner_settings.sql`
    - `migrations/011_github_agent_multi_repo.sql`
+   - `migrations/012_company_kb.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`

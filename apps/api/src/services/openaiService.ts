@@ -131,6 +131,23 @@ async function chatCompletionRaw(cfg: OpenAiConfig, body: any): Promise<any> {
   return (await res.json()) as any;
 }
 
+async function embeddingsRaw(cfg: OpenAiConfig, body: any): Promise<any> {
+  const url = `${cfg.baseUrl}/embeddings`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`OpenAI-compatible embeddings error: ${res.status} ${res.statusText} ${text}`);
+  }
+  return (await res.json()) as any;
+}
+
 async function chatCompletion(cfg: OpenAiConfig, input: { system: string; user: string }): Promise<string> {
   const json = await chatCompletionRaw(cfg, {
     messages: [
@@ -402,6 +419,27 @@ export async function classifyCapabilities(input: {
     : ["respond_in_chat", ...parsed.data.capabilities].slice(0, 3);
 
   return { ...parsed.data, capabilities: caps };
+}
+
+export async function embedText(input: {
+  text: string;
+  model?: string;
+}): Promise<{ embedding: number[]; model: string } | null> {
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return null;
+
+  const model = input.model ?? "text-embedding-3-small";
+  const text = String(input.text ?? "").trim();
+  if (!text) return null;
+
+  const json = await embeddingsRaw(cfg, {
+    model,
+    input: text.length > 20_000 ? text.slice(0, 20_000) : text,
+  });
+
+  const emb = json?.data?.[0]?.embedding;
+  if (!Array.isArray(emb) || emb.length === 0) return null;
+  return { embedding: emb.map((n: any) => Number(n)), model };
 }
 
 export async function generateSlackPlanAck(input: {

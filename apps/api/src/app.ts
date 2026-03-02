@@ -5,6 +5,7 @@ import { taskRoutes } from "./routes/taskRoutes";
 import { clientRoutes } from "./routes/clientRoutes";
 import { slackInternalRoutes } from "./routes/slackInternalRoutes";
 import { githubInternalRoutes } from "./routes/githubInternalRoutes";
+import { kbInternalRoutes } from "./routes/kbInternalRoutes";
 import { slackEventsHandler, slackPublicRoutes } from "./routes/slackPublicRoutes";
 import { DbNotConfiguredError, isDbConfigured } from "./db/client";
 import { InternalAuthNotConfiguredError, requireInternalServiceAuth } from "./middleware/internalAuth";
@@ -29,6 +30,7 @@ export function createApp() {
   app.use("/internal/clients", requireInternalServiceAuth, clientRoutes);
   app.use("/internal/slack", requireInternalServiceAuth, requireClientId, slackInternalRoutes);
   app.use("/internal/github", requireInternalServiceAuth, requireClientId, githubInternalRoutes);
+  app.use("/internal/kb", requireInternalServiceAuth, requireClientId, kbInternalRoutes);
 
   // API (requires a client context)
   app.use("/agents", requireClientId, agentRoutes);
