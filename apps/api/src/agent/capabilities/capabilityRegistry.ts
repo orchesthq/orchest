@@ -1,9 +1,15 @@
 import type { CapabilityDefinition, CapabilityId } from "./types";
 import { respondInChatCapability } from "./respond_in_chat";
 import { writeDocumentCapability } from "./write_document";
+import { inspectCodebaseCapability } from "./inspect_codebase";
 import { changeCodeCapability } from "./change_code";
 
-const ALL: CapabilityDefinition[] = [respondInChatCapability, writeDocumentCapability, changeCodeCapability];
+const ALL: CapabilityDefinition[] = [
+  respondInChatCapability,
+  writeDocumentCapability,
+  inspectCodebaseCapability,
+  changeCodeCapability,
+];
 
 export function listCapabilities(): CapabilityDefinition[] {
   return ALL.slice();

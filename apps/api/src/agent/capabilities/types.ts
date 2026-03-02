@@ -1,6 +1,6 @@
 import type { ToolAccessSummary } from "../tools/toolInventory";
 
-export type CapabilityId = "respond_in_chat" | "write_document" | "change_code";
+export type CapabilityId = "respond_in_chat" | "write_document" | "inspect_codebase" | "change_code";
 
 export type CapabilityCheckResult =
   | { ok: true }

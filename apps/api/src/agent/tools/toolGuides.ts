@@ -19,6 +19,7 @@ export const TOOL_GUIDES: ToolGuide[] = [
       "- If a file read is truncated, fetch needed chunks before editing.",
       "- For large files, search within the file before reading/editing.",
       "- Before opening a PR, review the changed files list and confirm scope matches intent.",
+      "- For read-only investigations, use search + targeted reads and cite evidence; avoid guessing.",
       "",
       "Quality rules:",
       "- No dead code: new helpers must be wired into an entry point.",
