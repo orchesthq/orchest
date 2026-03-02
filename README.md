@@ -182,6 +182,7 @@ Each agent can be linked to GitHub with its own commit identity (e.g. "Ava (Acme
    Without this, GitHub will not redirect users back after install.
 5. **Permissions:** Repository → Contents (Read and write), Pull requests (Read and write), Metadata (Read)
 6. Create the app, then under "About" note the **App ID** and **slug** (from the URL). Generate a **private key**.
+7. Add webhook URL: `https://<your-api-domain>/integrations/github/webhook`, secret (must match partner_settings.github.settings.webhookSecret in the database) and subscribe to Push events
 
 ### 2) Store GitHub App settings in Postgres
 
