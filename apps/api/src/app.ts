@@ -7,6 +7,7 @@ import { slackInternalRoutes } from "./routes/slackInternalRoutes";
 import { githubInternalRoutes } from "./routes/githubInternalRoutes";
 import { kbInternalRoutes } from "./routes/kbInternalRoutes";
 import { slackEventsHandler, slackPublicRoutes } from "./routes/slackPublicRoutes";
+import { githubWebhookRoutes } from "./routes/githubWebhookRoutes";
 import { DbNotConfiguredError, isDbConfigured } from "./db/client";
 import { InternalAuthNotConfiguredError, requireInternalServiceAuth } from "./middleware/internalAuth";
 
@@ -15,6 +16,9 @@ export function createApp() {
 
   // Slack Events API requires raw body for signature verification.
   app.post("/integrations/slack/events", express.raw({ type: "application/json" }), slackEventsHandler);
+
+  // GitHub webhooks require raw body for signature verification.
+  app.use("/integrations/github", express.raw({ type: "*/*" }), githubWebhookRoutes);
 
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));

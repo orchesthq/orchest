@@ -159,6 +159,9 @@ export type KbChunkRow = {
   end_line: number;
   content: string;
   content_hash: string;
+  symbol?: string | null;
+  kind?: string | null;
+  language?: string | null;
   token_count: number | null;
   created_at: string;
   updated_at: string;
@@ -302,6 +305,69 @@ export async function deleteKbChunksForFile(input: {
   return rows.length;
 }
 
+export async function listKbChunkDigestsForFile(input: {
+  clientId: string;
+  sourceId: string;
+  path: string;
+}): Promise<Array<{ startLine: number; endLine: number; contentHash: string; hasEmbedding: boolean }>> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.sourceId, "sourceId");
+  const p = input.path.trim();
+  if (!p) throw new Error("path is required");
+  const { rows } = await query<{
+    start_line: number;
+    end_line: number;
+    content_hash: string;
+    has_embedding: boolean;
+  }>(
+    [
+      "select start_line, end_line, content_hash, (embedding is not null) as has_embedding",
+      "from kb_chunks",
+      "where client_id = $1 and source_id = $2 and path = $3",
+    ].join("\n"),
+    [input.clientId, input.sourceId, p]
+  );
+  return rows.map((r) => ({
+    startLine: Number(r.start_line),
+    endLine: Number(r.end_line),
+    contentHash: String(r.content_hash),
+    hasEmbedding: Boolean((r as any).has_embedding),
+  }));
+}
+
+export async function deleteKbChunksNotInRangesForFile(input: {
+  clientId: string;
+  sourceId: string;
+  path: string;
+  keep: Array<{ startLine: number; endLine: number }>;
+}): Promise<number> {
+  assertUuid(input.clientId, "clientId");
+  assertUuid(input.sourceId, "sourceId");
+  const p = input.path.trim();
+  if (!p) throw new Error("path is required");
+  const keep = input.keep ?? [];
+  if (keep.length === 0) {
+    return await deleteKbChunksForFile({ clientId: input.clientId, sourceId: input.sourceId, path: p });
+  }
+
+  const startLines = keep.map((k) => k.startLine);
+  const endLines = keep.map((k) => k.endLine);
+
+  const { rows } = await query<{ id: string }>(
+    [
+      "with keep as (",
+      "  select unnest($4::int[]) as start_line, unnest($5::int[]) as end_line",
+      ")",
+      "delete from kb_chunks c",
+      "where c.client_id = $1 and c.source_id = $2 and c.path = $3",
+      "  and not exists (select 1 from keep k where k.start_line = c.start_line and k.end_line = c.end_line)",
+      "returning c.id",
+    ].join("\n"),
+    [input.clientId, input.sourceId, p, startLines, endLines]
+  );
+  return rows.length;
+}
+
 export async function insertKbChunk(input: {
   clientId: string;
   sourceId: string;
@@ -312,6 +378,9 @@ export async function insertKbChunk(input: {
   contentHash: string;
   embedding?: string | null; // pgvector literal, e.g. "[0.1,0.2,...]"
   tokenCount?: number | null;
+  symbol?: string | null;
+  kind?: string | null;
+  language?: string | null;
 }): Promise<void> {
   assertUuid(input.clientId, "clientId");
   assertUuid(input.sourceId, "sourceId");
@@ -322,13 +391,16 @@ export async function insertKbChunk(input: {
 
   await query(
     [
-      "insert into kb_chunks (client_id, source_id, path, start_line, end_line, content, content_hash, embedding, token_count)",
-      "values ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9)",
+      "insert into kb_chunks (client_id, source_id, path, start_line, end_line, content, content_hash, embedding, token_count, symbol, kind, language)",
+      "values ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9, $10, $11, $12)",
       "on conflict (source_id, path, start_line, end_line) do update set",
       "  content = excluded.content,",
       "  content_hash = excluded.content_hash,",
-      "  embedding = excluded.embedding,",
-      "  token_count = excluded.token_count,",
+      "  embedding = coalesce(excluded.embedding, kb_chunks.embedding),",
+      "  token_count = coalesce(excluded.token_count, kb_chunks.token_count),",
+      "  symbol = excluded.symbol,",
+      "  kind = excluded.kind,",
+      "  language = excluded.language,",
       "  updated_at = now()",
     ].join("\n"),
     [
@@ -341,6 +413,9 @@ export async function insertKbChunk(input: {
       input.contentHash,
       input.embedding ?? null,
       input.tokenCount ?? null,
+      input.symbol ?? null,
+      input.kind ?? null,
+      input.language ?? null,
     ]
   );
 }
@@ -1125,6 +1200,23 @@ export async function getGitHubInstallationByClientId(
       "limit 1",
     ].join("\n"),
     [clientId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function getGitHubInstallationByInstallationId(
+  installationId: number
+): Promise<GitHubInstallationRow | null> {
+  const id = Number(installationId);
+  if (!Number.isFinite(id) || id <= 0) throw new Error("installationId must be a positive number");
+  const { rows } = await query<GitHubInstallationRow>(
+    [
+      "select id, client_id, installation_id, owner_login, access_token, token_expires_at, created_at, updated_at",
+      "from github_installations",
+      "where installation_id = $1",
+      "limit 1",
+    ].join("\n"),
+    [id]
   );
   return rows[0] ?? null;
 }

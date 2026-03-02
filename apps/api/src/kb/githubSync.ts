@@ -1,6 +1,6 @@
-import { getGitHubInstallationByClientId } from "../db/schema";
+import { getGitHubInstallationByClientId, deleteKbChunksForFile } from "../db/schema";
 import { getValidInstallationToken } from "../integrations/github/githubService";
-import { getCommit, getRef, getTree, getBlobContentBytes } from "../integrations/github/githubApi";
+import { getCommit, getRef, getTree, getBlobContentBytes, getFileContentBytes } from "../integrations/github/githubApi";
 import { ensureKbGitHubSource, indexFileToKb } from "./kbService";
 
 const DEFAULT_MAX_FILE_BYTES = 300_000;
@@ -30,6 +30,68 @@ function isProbablyTextFile(path: string): boolean {
     p.endsWith(".env") ||
     p.endsWith(".env.example")
   );
+}
+
+export async function syncGitHubRepoPathsToKb(input: {
+  clientId: string;
+  repoFullName: string;
+  ref: string;
+  sha: string;
+  changedPaths: string[];
+  removedPaths?: string[];
+  maxFileBytes?: number;
+}): Promise<{ indexedFiles: number; chunks: number; removedFiles: number }> {
+  const repo = input.repoFullName.trim();
+  const ref = input.ref.trim() || "main";
+  const sha = String(input.sha ?? "").trim();
+  if (!repo) throw new Error("repoFullName is required");
+  if (!sha) throw new Error("sha is required");
+
+  const installation = await getGitHubInstallationByClientId(input.clientId);
+  if (!installation) throw new Error("GitHub is not connected for this client.");
+  const token = await getValidInstallationToken(installation.installation_id);
+
+  const source = await ensureKbGitHubSource({
+    clientId: input.clientId,
+    repoFullName: repo,
+    ref,
+    lastSyncedSha: sha,
+  });
+
+  const maxBytes = Math.min(Math.max(input.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES, 10_000), 2_000_000);
+
+  let removedFiles = 0;
+  for (const p of input.removedPaths ?? []) {
+    try {
+      removedFiles += await deleteKbChunksForFile({ clientId: input.clientId, sourceId: source.id, path: p });
+    } catch {
+      // ignore
+    }
+  }
+
+  let indexedFiles = 0;
+  let chunks = 0;
+  const paths = Array.from(new Set(input.changedPaths)).slice(0, 400);
+  for (const p of paths) {
+    if (!isProbablyTextFile(p)) continue;
+    try {
+      const { bytes, size } = await getFileContentBytes(token, repo, p, sha);
+      if (size > maxBytes) continue;
+      const text = bytes.toString("utf8");
+      const r = await indexFileToKb({
+        clientId: input.clientId,
+        source,
+        path: p,
+        text,
+      });
+      indexedFiles += 1;
+      chunks += r.chunks;
+    } catch {
+      // ignore individual file errors (deleted/binary/encoding/etc.)
+    }
+  }
+
+  return { indexedFiles, chunks, removedFiles };
 }
 
 export async function syncGitHubRepoToKb(input: {
