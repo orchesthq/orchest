@@ -12,6 +12,10 @@ type GitHubStatus = {
   ownerLogin?: string;
 };
 
+type GitHubRepos = {
+  repos: Array<{ full_name: string }>;
+};
+
 export default async function GitHubIntegrationPage(props: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
@@ -29,6 +33,9 @@ export default async function GitHubIntegrationPage(props: {
   const searchParams = (await props.searchParams) ?? {};
   const error = typeof searchParams.error === "string" ? searchParams.error : null;
   const github = typeof searchParams.github === "string" ? searchParams.github : null;
+  const kb = typeof searchParams.kb === "string" ? searchParams.kb : null;
+  const kbError = typeof searchParams.kb_error === "string" ? searchParams.kb_error : null;
+  const repoParam = typeof searchParams.repo === "string" ? searchParams.repo : null;
   const returnTo = typeof searchParams.returnTo === "string" ? searchParams.returnTo : "";
 
   let status: GitHubStatus | null = null;
@@ -38,6 +45,15 @@ export default async function GitHubIntegrationPage(props: {
     });
   } catch {
     status = null;
+  }
+
+  let repos: GitHubRepos | null = null;
+  if (status?.connected) {
+    try {
+      repos = await apiFetchForClient<GitHubRepos>(clientId, "/internal/github/repos", { method: "GET" });
+    } catch {
+      repos = null;
+    }
   }
 
   return (
@@ -96,6 +112,26 @@ export default async function GitHubIntegrationPage(props: {
           <div className="font-medium text-zinc-900">GitHub disconnected</div>
           <div className="mt-2 text-xs text-zinc-600">
             The organization link (and all per-agent GitHub links) were removed.
+          </div>
+        </div>
+      )}
+
+      {(kb || kbError) && (
+        <div
+          className={[
+            "rounded-2xl border p-6 text-sm shadow-sm",
+            kbError ? "border-rose-200 bg-rose-50 text-rose-900" : "border-emerald-200 bg-emerald-50 text-emerald-900",
+          ].join(" ")}
+        >
+          <div className="font-medium">
+            {kbError ? "Knowledge base sync failed" : "Knowledge base synced"}
+          </div>
+          <div className="mt-2 text-xs">
+            {kb === "synced"
+              ? `Repo synced: ${repoParam ?? "unknown"}`
+              : kbError === "kb_sync_missing_repo"
+                ? "Missing repo name."
+                : "Could not sync this repo to the knowledge base. Check API logs for details (and ensure OpenAI embeddings are configured)."}
           </div>
         </div>
       )}
@@ -187,6 +223,48 @@ export default async function GitHubIntegrationPage(props: {
       <p className="text-sm text-zinc-500">
         After connecting, go to each agent&apos;s page to link them to a specific repository and set access level (read / PR-only / direct push).
       </p>
+
+      {status?.connected && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <div className="text-base font-semibold text-zinc-900">Knowledge base</div>
+          <p className="mt-1 text-sm text-zinc-600">
+            Sync repositories into the company knowledge base so agents can answer “how does this work?” questions grounded in your code.
+          </p>
+
+          {repos?.repos?.length ? (
+            <div className="mt-4 space-y-2">
+              {repos.repos.slice(0, 40).map((r) => (
+                <div
+                  key={r.full_name}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3"
+                >
+                  <div className="text-sm font-medium text-zinc-900">{r.full_name}</div>
+                  <PendingForm action="/app/integrations/github/kb-sync" method="post">
+                    <input type="hidden" name="repoFullName" value={r.full_name} />
+                    <input type="hidden" name="ref" value="main" />
+                    <input type="hidden" name="returnTo" value={returnTo || ""} />
+                    <PendingSubmitButton
+                      pendingText="Syncing…"
+                      className="h-9 rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                    >
+                      Sync to knowledge base
+                    </PendingSubmitButton>
+                  </PendingForm>
+                </div>
+              ))}
+              {repos.repos.length > 40 ? (
+                <div className="text-xs text-zinc-500">
+                  Showing first 40 repos. (We can add search/filter next.)
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mt-4 text-xs text-zinc-500">
+              No repositories found (or the repo list couldn’t be loaded). Ensure the GitHub App has access to at least one repo and refresh.
+            </div>
+          )}
+        </div>
+      )}
 
       <Link
         href="/app/agents"
