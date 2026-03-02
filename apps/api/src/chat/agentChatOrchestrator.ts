@@ -130,7 +130,7 @@ export async function handleInboundChatMessage(input: {
                 systemPrompt: agent.system_prompt,
                 taskText: text,
                 plan: { steps: [] },
-                profileMemories: profileMemories.map((m) => m.content),
+                profileMemories: profileMemories.slice(0, 1).map((m) => m.content),
               }).catch(() => null);
               if (ack) {
                 await transport.postMessage({
@@ -160,7 +160,7 @@ export async function handleInboundChatMessage(input: {
                 systemPrompt: agent.system_prompt,
                 taskText: text,
                 plan,
-                profileMemories: profileMemories.map((m) => m.content),
+                profileMemories: profileMemories.slice(0, 1).map((m) => m.content),
               }).catch(() => null);
               if (ack) {
                 await transport.postMessage({

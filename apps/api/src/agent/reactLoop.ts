@@ -87,7 +87,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           taskText: taskInput,
           executed,
           draft: final,
-          profileMemories: memories.filter((m) => m.memory_type === "profile").map((m) => m.content),
+          profileMemories: memories.filter((m) => m.memory_type === "profile").slice(0, 1).map((m) => m.content),
         });
 
         await completeTask(taskId, finalized);
@@ -123,7 +123,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       taskText: ctx.task.input,
       executed,
       draft: final,
-      profileMemories: memories.filter((m) => m.memory_type === "profile").map((m) => m.content),
+      profileMemories: memories.filter((m) => m.memory_type === "profile").slice(0, 1).map((m) => m.content),
     });
 
     await completeTask(taskId, finalized);

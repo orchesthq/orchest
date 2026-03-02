@@ -112,10 +112,16 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   const maxToolCalls = input.maxToolCalls ?? readIntEnv("ORCHEST_AGENT_MAX_TOOL_CALLS", 30);
   const tools = input.registry.toOpenAiTools();
 
+  // Use only the latest profile; include all episodic/semantic
+  const dedupedMemories = input.memories.reduce<typeof input.memories>((acc, m) => {
+    if (m.memory_type === "profile" && acc.some((x) => x.memory_type === "profile")) return acc;
+    return [...acc, m];
+  }, []);
+
   const memoryBlock =
-    input.memories.length === 0
+    dedupedMemories.length === 0
       ? "No prior memories."
-      : input.memories
+      : dedupedMemories
           .slice(0, 25)
           .map((m) => `- [${m.memory_type}] ${m.content}`)
           .join("\n");
