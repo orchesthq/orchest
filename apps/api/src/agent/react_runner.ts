@@ -189,7 +189,8 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
       const needsKbGrounding =
         Boolean(input.toolAccess?.kb?.available) &&
         Array.isArray(input.capabilities) &&
-        input.capabilities.includes("inspect_client_knowledge_base" as any);
+        (input.capabilities.includes("inspect_client_knowledge_base" as any) ||
+          input.capabilities.includes("answer_question" as any));
       const hasKbSearch = usedTools.has("kb_search");
       if (needsKbGrounding && !hasKbSearch) {
         groundingAttempts += 1;
@@ -225,6 +226,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
             "- If you added any new helper/module, is it actually wired into an existing codepath?",
             "- Did you avoid introducing a new test framework or *.test.* file unless explicitly requested?",
             "- Do the changes match the intended scope (no unrelated edits)?",
+            "- If this was a Q&A request, is your answer concise (aim: 5–12 lines) and grounded if company-specific?",
             "",
             "If anything is missing/incorrect, call the appropriate tool(s) to fix it.",
             "Otherwise, reply with the final answer. Do not mention that you performed a check.",

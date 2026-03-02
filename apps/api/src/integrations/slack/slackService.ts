@@ -560,9 +560,15 @@ async function handleDirectMessage(input: {
   const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
     taskText
   );
+  const questionLike =
+    /\?$/.test(taskText.trim()) ||
+    /\b(what|where|how|why|when|who)\b/i.test(taskText) ||
+    /^\s*(can you|could you|do you know|does it|is it possible|what's|whats|where's|wheres|how's|hows)\b/i.test(
+      taskText
+    );
 
-  if (docLike) {
-    slackDebugLog("[slack] routing message to task flow (doc-like request)");
+  if (docLike || questionLike) {
+    slackDebugLog("[slack] routing message to task flow (doc/question request)");
     await runTaskAndReply({
       installation: input.installation,
       agentLink: link,
@@ -650,8 +656,14 @@ async function handleAppMention(input: {
   const docLike = /\b(canvas|canvases|doc|docs|prd|spec|one-?pager|write-?up|notes|confluence|notion|google doc)\b/i.test(
     cleaned
   );
-  if (docLike) {
-    slackDebugLog("[slack] routing mention to task flow (doc-like request)");
+  const questionLike =
+    /\?$/.test(cleaned.trim()) ||
+    /\b(what|where|how|why|when|who)\b/i.test(cleaned) ||
+    /^\s*(can you|could you|do you know|does it|is it possible|what's|whats|where's|wheres|how's|hows)\b/i.test(
+      cleaned
+    );
+  if (docLike || questionLike) {
+    slackDebugLog("[slack] routing mention to task flow (doc/question request)");
     await runTaskAndReply({
       installation: input.installation,
       agentLink: link,

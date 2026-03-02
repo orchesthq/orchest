@@ -3,6 +3,11 @@ import type { CapabilityId } from "./types";
 export function selectCapabilities(taskText: string): CapabilityId[] {
   const t = String(taskText ?? "").toLowerCase();
 
+  const questionLike =
+    /\?$/.test(t.trim()) ||
+    /\b(what|where|how|why|when|who)\b/.test(t) ||
+    /\b(can you|could you|do you know|does it|is it possible)\b/.test(t);
+
   const inspectLike =
     /\b(where is|where are|how does|how do|what changed|what does|explain|walk me through)\b/i.test(t) ||
     /\b(repo|repository|codebase|in the code|in orchest|in this repo)\b/i.test(t);
@@ -18,6 +23,7 @@ export function selectCapabilities(taskText: string): CapabilityId[] {
   if (codeLike) return ["change_code", "respond_in_chat"];
   if (inspectLike) return ["inspect_client_knowledge_base", "respond_in_chat"];
   if (docLike) return ["write_document", "respond_in_chat"];
+  if (questionLike) return ["answer_question", "respond_in_chat"];
   return ["respond_in_chat"];
 }
 

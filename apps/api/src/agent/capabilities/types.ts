@@ -2,6 +2,7 @@ import type { ToolAccessSummary } from "../tools/toolInventory";
 
 export type CapabilityId =
   | "respond_in_chat"
+  | "answer_question"
   | "write_document"
   | "inspect_client_knowledge_base"
   | "change_code";
