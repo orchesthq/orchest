@@ -195,6 +195,7 @@ values (
   jsonb_build_object(
     'appId', 123456,
     'appSlug', 'orchest-github',
+    'webhookSecret', 'your-secret-configured-in-github',
     'privateKey', $$-----BEGIN RSA PRIVATE KEY-----
 ...
 -----END RSA PRIVATE KEY-----$$
