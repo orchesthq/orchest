@@ -18,6 +18,12 @@ export type ConversationalResult =
   | { type: "chat"; reply: string }
   | { type: "task" };
 
+export type CapabilityClassification = {
+  capabilities: string[];
+  confidence: number;
+  reason?: string;
+};
+
 const planSchema = z.object({
   steps: z.array(z.string().min(1)).min(1),
   actions: z
@@ -340,6 +346,62 @@ export async function tryConversationalReply(input: {
     return { type: "task" };
   }
   return { type: "chat", reply: trimmed };
+}
+
+export async function classifyCapabilities(input: {
+  taskText: string;
+  availableCapabilities: Array<{ id: string; title: string; description: string }>;
+  toolAccessSummary?: string;
+}): Promise<CapabilityClassification | null> {
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return null;
+
+  const ids = input.availableCapabilities.map((c) => c.id);
+  const idList = ids.map((id) => `- ${id}`).join("\n");
+  const capBlock = input.availableCapabilities
+    .map((c) => `- ${c.id}: ${c.title} — ${c.description}`)
+    .join("\n");
+
+  const schema = z.object({
+    capabilities: z.array(z.enum(ids as [string, ...string[]])).min(1).max(3),
+    confidence: z.number().min(0).max(1),
+    reason: z.string().optional(),
+  });
+
+  const system = [
+    "You are a routing classifier for an autonomous workplace agent.",
+    "Choose which capabilities the user needs for this task.",
+    "Return ONLY valid JSON (no prose, no markdown fences).",
+    "",
+    "Rules:",
+    "- Only select from the available capability ids.",
+    "- Prefer including respond_in_chat unless the user explicitly wants no chat output.",
+    "- If the task is primarily about changing code, include change_code.",
+    "- If the task is primarily about producing a standalone doc/spec/options, include write_document.",
+  ].join("\n");
+
+  const user = [
+    "## Task",
+    input.taskText,
+    "",
+    "## Available capabilities",
+    capBlock || idList,
+    "",
+    input.toolAccessSummary ? ["## Available tools", input.toolAccessSummary, ""].join("\n") : "",
+    'Return JSON like: {"capabilities":["respond_in_chat"],"confidence":0.7,"reason":"..."}',
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const content = await chatCompletion(cfg, { system, user });
+  const parsed = schema.safeParse(safeParseJson(content));
+  if (!parsed.success) return null;
+
+  const caps = parsed.data.capabilities.includes("respond_in_chat")
+    ? parsed.data.capabilities
+    : ["respond_in_chat", ...parsed.data.capabilities].slice(0, 3);
+
+  return { ...parsed.data, capabilities: caps };
 }
 
 export async function generateSlackPlanAck(input: {

@@ -1,5 +1,10 @@
 import type { ToolRegistry, ToolResult } from "./tools/registry";
 import { agentChatWithTools } from "../services/openaiService";
+import type { CapabilityId } from "./capabilities/types";
+import type { ToolAccessSummary } from "./tools/toolInventory";
+import { getCapability } from "./capabilities/capabilityRegistry";
+import { getEnabledToolGuides } from "./tools/toolGuides";
+import { formatToolAccessSummary } from "./tools/toolInventory";
 
 type ReActOptions = {
   taskId: string;
@@ -9,6 +14,8 @@ type ReActOptions = {
   taskInput: string;
   memories: Array<{ memory_type: string; content: string }>;
   registry: ToolRegistry;
+  toolAccess?: ToolAccessSummary;
+  capabilities?: CapabilityId[];
   maxIterations?: number;
   maxToolCalls?: number;
   onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
@@ -100,12 +107,6 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   const maxIterations = input.maxIterations ?? readIntEnv("ORCHEST_AGENT_MAX_ITERATIONS", 20);
   const maxToolCalls = input.maxToolCalls ?? readIntEnv("ORCHEST_AGENT_MAX_TOOL_CALLS", 30);
   const tools = input.registry.toOpenAiTools();
-  const toolNames = new Set(tools.map((t) => t.function?.name).filter(Boolean) as string[]);
-  const hasGitHubTools =
-    toolNames.has("github_read_file") ||
-    toolNames.has("github_apply_patch") ||
-    toolNames.has("open_pull_request") ||
-    toolNames.has("create_file_and_commit");
 
   const memoryBlock =
     input.memories.length === 0
@@ -135,15 +136,25 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
     "If you have enough information, respond with a final user-facing answer.",
   ];
 
-  if (hasGitHubTools) {
-    systemParts.push(
-      "",
-      "GitHub safety rules (only apply when using GitHub tools):",
-      "- Prefer github_apply_patch over create_file_and_commit for existing files (avoid whole-file rewrites).",
-      "- If github_read_file reports truncated=true (or content includes '[truncated]'), do NOT overwrite that file. Use github_read_file_chunk to fetch the needed parts first, then use github_apply_patch.",
-      "- If you can't find something in a large file, use github_find_in_file to locate it (line windows + byte offsets) before reading or editing.",
-      "- Before opening a PR, call github_list_changed_files and confirm the changed files match your intended scope. If not, fix before opening the PR."
-    );
+  if (input.toolAccess) {
+    systemParts.push("", "Available tools for this agent:", formatToolAccessSummary(input.toolAccess));
+  }
+
+  const capabilityIds: CapabilityId[] = Array.isArray(input.capabilities) && input.capabilities.length > 0 ? input.capabilities : [];
+  if (capabilityIds.length > 0) {
+    systemParts.push("", "Selected capabilities (in priority order):", capabilityIds.map((c) => `- ${c}`).join("\n"));
+    for (const capId of capabilityIds.slice(0, 3)) {
+      const cap = getCapability(capId);
+      systemParts.push("", `Capability guide: ${cap.title}`, cap.guide);
+    }
+
+    if (input.toolAccess) {
+      const relevantTools = Array.from(new Set(capabilityIds.flatMap((id) => getCapability(id).relevantTools)));
+      const toolGuides = getEnabledToolGuides(input.toolAccess, relevantTools);
+      for (const g of toolGuides) {
+        systemParts.push("", `Tool guide: ${g.title}`, g.guide);
+      }
+    }
   }
 
   const system = systemParts.join("\n");
