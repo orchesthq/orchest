@@ -534,12 +534,24 @@ export async function github_list_changed_files(
   }
 }
 
-function parseUnifiedDiff(patch: string): Array<{ path: string; hunks: Array<{ lines: string[] }> }> {
+function parseUnifiedDiff(patch: string): {
+  files: Array<{ path: string; hunks: Array<{ lines: string[] }> }>;
+  sawHunkHeader: boolean;
+} {
   const text = String(patch ?? "");
   const lines = text.split(/\r?\n/);
   const files: Array<{ path: string; hunks: Array<{ lines: string[] }> }> = [];
   let current: { path: string; hunks: Array<{ lines: string[] }> } | null = null;
   let currentHunk: { lines: string[] } | null = null;
+  let sawHunkHeader = false;
+  let lastOldPath: string | null = null;
+
+  const normalizePath = (raw: string): string => {
+    const v = String(raw ?? "").trim().replace(/^"+|"+$/g, "");
+    if (!v || v === "/dev/null") return "";
+    if (v.startsWith("a/") || v.startsWith("b/")) return v.slice(2);
+    return v;
+  };
 
   const flushHunk = () => {
     if (current && currentHunk) {
@@ -556,6 +568,15 @@ function parseUnifiedDiff(patch: string): Array<{ path: string; hunks: Array<{ l
   };
 
   for (const line of lines) {
+    if (line.startsWith("*** Begin Patch") || line.startsWith("*** End Patch") || line.startsWith("*** End of File")) {
+      continue;
+    }
+    if (line.startsWith("*** Update File: ")) {
+      flushFile();
+      const path = normalizePath(line.slice("*** Update File: ".length));
+      if (path) current = { path, hunks: [] };
+      continue;
+    }
     if (line.startsWith("diff --git ")) {
       flushFile();
       // Example: diff --git a/path b/path
@@ -564,9 +585,21 @@ function parseUnifiedDiff(patch: string): Array<{ path: string; hunks: Array<{ l
       if (path) current = { path, hunks: [] };
       continue;
     }
+    if (line.startsWith("--- ")) {
+      lastOldPath = normalizePath(line.slice(4));
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      flushFile();
+      const newPath = normalizePath(line.slice(4));
+      const path = newPath || lastOldPath || "";
+      if (path) current = { path, hunks: [] };
+      continue;
+    }
     if (!current) continue;
 
     if (line.startsWith("@@")) {
+      sawHunkHeader = true;
       flushHunk();
       currentHunk = { lines: [] };
       continue;
@@ -579,7 +612,7 @@ function parseUnifiedDiff(patch: string): Array<{ path: string; hunks: Array<{ l
     }
   }
   flushFile();
-  return files.filter((f) => f.hunks.length > 0);
+  return { files: files.filter((f) => f.hunks.length > 0), sawHunkHeader };
 }
 
 function applyHunksToText(original: string, hunks: Array<{ lines: string[] }>): string {
@@ -633,8 +666,16 @@ export async function github_apply_patch(
   if (!patch) return { ok: false, message: "Not executed: patch is empty." };
 
   try {
-    const files = parseUnifiedDiff(patch);
+    const parsed = parseUnifiedDiff(patch);
+    const files = parsed.files;
     if (files.length === 0) {
+      if (parsed.sawHunkHeader) {
+        return {
+          ok: false,
+          message:
+            "Not executed: patch has hunk headers but no file headers. Include one of: 'diff --git a/... b/...', '---/+++', or '*** Update File: ...'.",
+        };
+      }
       return { ok: false, message: "Not executed: patch contained no hunks." };
     }
     if (files.length > 10) {
