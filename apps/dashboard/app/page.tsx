@@ -108,13 +108,21 @@ export default async function Home() {
         </div>
 
         <section className="mt-12">
-          <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
-            What you can do with Orchest
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm text-zinc-600">
-            Start with a single agent in Slack. Connect your sources of truth, then
-            let the agent answer with context and take small, reviewable actions.
-          </p>
+          <div className="flex items-end justify-between gap-6">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
+                What you can do with Orchest
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm text-zinc-600">
+                Start with a single agent in Slack. Connect your sources of truth,
+                then let the agent answer with context and take small, reviewable
+                actions.
+              </p>
+            </div>
+            <p className="hidden text-sm text-zinc-500 sm:block">
+              6 capabilities
+            </p>
+          </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <FeatureCard
@@ -129,19 +137,27 @@ export default async function Home() {
               title="Lightweight coding help (with guardrails)"
               description="Draft small changes, explain diffs, and prepare PR-ready suggestions—so engineers stay in control."
             />
-            <FeatureCard
-              title="Repeatable workflows"
-              description="Standardize how your team handles common requests: support triage, release notes, weekly updates, and more."
-            />
-            <FeatureCard
-              title="Identity + memory"
-              description="Give agents a role and persistent context so they behave consistently across conversations and tasks."
-            />
-            <FeatureCard
-              title="Built for teams"
-              description="Designed for real company workflows: clear outcomes, traceability, and a path to safe automation."
-            />
           </div>
+
+          <details className="mt-4">
+            <summary className="cursor-pointer select-none text-sm font-medium text-zinc-900 hover:text-zinc-700">
+              Show more capabilities
+            </summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <FeatureCard
+                title="Repeatable workflows"
+                description="Standardize how your team handles common requests: support triage, release notes, weekly updates, and more."
+              />
+              <FeatureCard
+                title="Identity + memory"
+                description="Give agents a role and persistent context so they behave consistently across conversations and tasks."
+              />
+              <FeatureCard
+                title="Built for teams"
+                description="Designed for real company workflows: clear outcomes, traceability, and a path to safe automation."
+              />
+            </div>
+          </details>
         </section>
 
         <section className="mt-12">
