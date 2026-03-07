@@ -8,7 +8,7 @@ A design for giving Orchest agents access to GitHub from the dashboard. **Each a
 
 - **Client** connects GitHub once (install Orchest GitHub App on their org)
 - **Each agent** links to that installation with its own `commit_author_name` and `commit_author_email`
-- Commits from Ava show as "Ava (Acme) <ava@agents.orchest.io>", Ben as "Ben (Acme) <ben@agents.orchest.io>"
+- Commits from Ava show as "Ava (Acme) <ava@orchesthq.com>", Ben as "Ben (Acme) <ben@orchesthq.com>"
 - Tables: `github_installations` (client-level), `github_agent_connections` (per-agent)
 
 ---

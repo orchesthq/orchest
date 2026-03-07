@@ -315,7 +315,7 @@ export async function linkAgentToGitHub(input: {
     agentId: input.agentId,
     githubInstallationId: installation.id,
     commitAuthorName: input.commitAuthorName?.trim() || agent.name,
-    commitAuthorEmail: input.commitAuthorEmail?.trim() || `${safeEmail(agent.name)}@agents.orchest.io`,
+    commitAuthorEmail: input.commitAuthorEmail?.trim() || `${safeEmail(agent.name)}@orchesthq.com`,
     accessLevel: input.accessLevel ?? "pr_only",
     defaultBranch: input.defaultBranch ?? "main",
     defaultRepo: input.defaultRepo.trim(),

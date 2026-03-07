@@ -463,7 +463,7 @@ export default async function AgentPage({
                         type="email"
                         defaultValue={
                           githubConnections[0]?.commit_author_email ??
-                          `${agentResp.agent.name.toLowerCase().replace(/\s+/g, "-")}@agents.orchest.io`
+                          `${agentResp.agent.name.toLowerCase().replace(/\s+/g, "-")}@orchesthq.com`
                         }
                         className="mt-0.5 h-9 rounded-md border border-zinc-200 px-3 text-sm"
                       />
