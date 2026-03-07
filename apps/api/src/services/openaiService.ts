@@ -502,11 +502,6 @@ export async function generatePlanAck(input: {
   return "On it - I'll look this up and come back with one answer.";
 }
 
-// Backwards-compatible alias (prefer generatePlanAck).
-export async function generateSlackPlanAck(input: Parameters<typeof generatePlanAck>[0]): Promise<string> {
-  return await generatePlanAck(input);
-}
-
 function clampAckToSingleSentence(raw: string): string {
   const fallback = "On it - I'll look this up and come back with one answer.";
   const text = String(raw ?? "").replace(/\s+/g, " ").trim();
@@ -582,13 +577,6 @@ export async function finalizeAgentChatResponse(input: {
   const content = json?.choices?.[0]?.message?.content;
   if (typeof content === "string" && content.trim()) return content.trim();
   return input.draft;
-}
-
-// Backwards-compatible alias (prefer finalizeAgentChatResponse).
-export async function finalizeAgentSlackResponse(
-  input: Parameters<typeof finalizeAgentChatResponse>[0]
-): Promise<string> {
-  return await finalizeAgentChatResponse(input);
 }
 
 function safeParseJson(text: string): unknown {

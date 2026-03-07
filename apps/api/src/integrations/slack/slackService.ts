@@ -14,9 +14,8 @@ import {
   type SlackAgentLinkRow,
   type SlackInstallationRow,
 } from "../../db/schema";
-import { generatePlanAck } from "../../services/openaiService";
 import { isDbConfigured } from "../../db/client";
-import { slackApi, slackApiGet } from "./slackApiClient";
+import { slackApi } from "./slackApiClient";
 import { createSlackTransport } from "./slackTransport";
 import { handleInboundChatMessage } from "../../chat/agentChatOrchestrator";
 import { getThreadSubscription, subscribeThread } from "../../chat/threadSubscriptions";
@@ -382,7 +381,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
       },
       transport,
       author: { displayName: link.display_name, iconUrl: link.icon_url ?? null },
-      options: { ackGenerator: generatePlanAck },
     });
     return;
   }
@@ -447,7 +445,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
       },
       transport,
       author: { displayName: link.display_name, iconUrl: link.icon_url ?? null },
-      options: { ackGenerator: generatePlanAck },
     });
     return;
   }
@@ -503,7 +500,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
       },
       transport,
       author: { displayName: link.display_name, iconUrl: link.icon_url ?? null },
-      options: { ackGenerator: generatePlanAck },
     });
     return;
   }

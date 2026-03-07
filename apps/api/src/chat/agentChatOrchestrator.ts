@@ -4,7 +4,7 @@ import {
   listAgentMemoriesByTypeScoped,
 } from "../db/schema";
 import { runAgentTask } from "../agent/agentLoop";
-import { tryConversationalReply } from "../services/openaiService";
+import { generatePlanAck, tryConversationalReply } from "../services/openaiService";
 import type { ChatAuthor, ChatTransport, InboundChatMessage } from "./types";
 
 const DOC_LIKE =
@@ -16,17 +16,7 @@ const QUESTION_WORD =
 const QUESTION_START =
   /^\s*(can you|could you|do you know|does it|is it possible|what's|whats|where's|wheres|how's|hows)\b/i;
 
-export type PlanAckGenerator = (input: {
-  agentName: string;
-  agentRole: string;
-  systemPrompt: string;
-  taskText: string;
-  plan: { steps: string[]; notes?: string };
-  profileMemories: string[];
-}) => Promise<string | null>;
-
 export type OrchestratorOptions = {
-  ackGenerator?: PlanAckGenerator;
   /**
    * Override routing heuristics (transport can supply stronger hints).
    * If omitted, heuristics run on the message text.
@@ -97,6 +87,28 @@ export async function handleInboundChatMessage(input: {
       taskInput: `${text}${threadContext}`,
     });
 
+    let postedAck = false;
+    const postAck = async (plan: { steps: string[]; notes?: string }) => {
+      if (postedAck || suppressPlanAck) return;
+      postedAck = true;
+
+      const ack = await generatePlanAck({
+        agentName: agent.name,
+        agentRole: agent.role,
+        systemPrompt: agent.system_prompt,
+        taskText: text,
+        plan,
+        profileMemories: profileMemories.slice(0, 1).map((m) => m.content),
+      }).catch(() => null);
+
+      await transport.postMessage({
+        conversationId: msg.conversationId,
+        threadId: msg.threadId,
+        text: ack || "On it - I'll look this up and come back with one answer.",
+        author,
+      });
+    };
+
     let postedProgressHeader = false;
     const postProgress = async (t: string) => {
       const clipped = String(t ?? "").trim();
@@ -120,77 +132,12 @@ export async function handleInboundChatMessage(input: {
     };
 
     void runAgentTask(task.id, {
-      onAck: suppressPlanAck
-        ? undefined
-        : async () => {
-            if (input.options?.ackGenerator) {
-              const ack = await input.options.ackGenerator({
-                agentName: agent.name,
-                agentRole: agent.role,
-                systemPrompt: agent.system_prompt,
-                taskText: text,
-                plan: { steps: [] },
-                profileMemories: profileMemories.slice(0, 1).map((m) => m.content),
-              }).catch(() => null);
-              if (ack) {
-                await transport.postMessage({
-                  conversationId: msg.conversationId,
-                  threadId: msg.threadId,
-                  text: ack,
-                  author,
-                });
-                return;
-              }
-            }
-
-            await transport.postMessage({
-              conversationId: msg.conversationId,
-              threadId: msg.threadId,
-              text: "On it.",
-              author,
-            });
-          },
-      onPlanReady: suppressPlanAck
-        ? undefined
-        : async (plan) => {
-            if (input.options?.ackGenerator) {
-              const ack = await input.options.ackGenerator({
-                agentName: agent.name,
-                agentRole: agent.role,
-                systemPrompt: agent.system_prompt,
-                taskText: text,
-                plan,
-                profileMemories: profileMemories.slice(0, 1).map((m) => m.content),
-              }).catch(() => null);
-              if (ack) {
-                await transport.postMessage({
-                  conversationId: msg.conversationId,
-                  threadId: msg.threadId,
-                  text: ack,
-                  author,
-                });
-                return;
-              }
-            }
-
-            // Generic fallback.
-            if (plan.steps.length === 0) {
-              await transport.postMessage({
-                conversationId: msg.conversationId,
-                threadId: msg.threadId,
-                text: "On it.",
-                author,
-              });
-              return;
-            }
-            const steps = plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-            await transport.postMessage({
-              conversationId: msg.conversationId,
-              threadId: msg.threadId,
-              text: `On it.\n\nPlan:\n${steps}`,
-              author,
-            });
-          },
+      onAck: async () => {
+        await postAck({ steps: [] });
+      },
+      onPlanReady: async (plan) => {
+        await postAck(plan);
+      },
       onProgress: async (u) => {
         if (!u.text) return;
         await postProgress(u.text);
