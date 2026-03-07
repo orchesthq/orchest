@@ -74,9 +74,9 @@ export default async function Home() {
 
       <main className="relative mx-auto max-w-6xl px-6 py-16">
         <header className="rounded-3xl border border-zinc-200/70 bg-white/70 p-10 shadow-sm backdrop-blur">
-          <p className="text-sm font-medium text-zinc-500">Orchest</p>
+          <p className="text-sm font-medium text-zinc-500">Orchest HQ</p>
           <h1 className="mt-3 max-w-3xl text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
-            A calm, safe way to run AI agents in Slack.
+            Welcome to Orchest HQ
           </h1>
           <p className="mt-4 max-w-2xl text-zinc-600">
             Connect your knowledge and tools, then let agents answer questions and
@@ -104,7 +104,7 @@ export default async function Home() {
 
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-zinc-200/70 bg-white/60 px-4 py-3 text-sm text-zinc-700">
-              <span className="font-medium text-zinc-900">KB Q&A</span> with links back to sources
+              <span className="font-medium text-zinc-900">Knowledge Base Q&A</span> with links back to sources
             </div>
             <div className="rounded-2xl border border-zinc-200/70 bg-white/60 px-4 py-3 text-sm text-zinc-700">
               <span className="font-medium text-zinc-900">Summaries</span> for threads, incidents, decisions
@@ -125,7 +125,6 @@ export default async function Home() {
                 Start small: one agent, one workflow. Expand only when its working.
               </p>
             </div>
-            <p className="hidden text-sm text-zinc-500 sm:block">6 capabilities</p>
           </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -139,7 +138,7 @@ export default async function Home() {
             />
             <FeatureCard
               title="Lightweight coding help (with guardrails)"
-              description="Draft small changes, explain diffs, and prepare PR-ready suggestionsso engineers stay in control."
+              description="Draft small changes, explain diffs, and prepare PR-ready suggestions, so engineers stay in control."
             />
           </div>
 
@@ -224,7 +223,7 @@ export default async function Home() {
                 Is this meant to replace my team?
               </summary>
               <p className="mt-3 text-sm leading-6 text-zinc-600">
-                No. Orchest is designed to help teams move faster on repetitive worksummaries, Q&A, and small, reviewable changes.
+                No. Orchest is designed to help teams move faster on repetitive work, summaries, Q&A, and small, reviewable changes.
               </p>
             </details>
             <details className="rounded-2xl border border-zinc-200/70 bg-white/70 p-5 shadow-sm backdrop-blur">
@@ -237,7 +236,7 @@ export default async function Home() {
             </details>
             <details className="rounded-2xl border border-zinc-200/70 bg-white/70 p-5 shadow-sm backdrop-blur">
               <summary className="cursor-pointer select-none text-sm font-medium text-zinc-900">
-                Whats the fastest way to see value?
+                What's the fastest way to see value?
               </summary>
               <p className="mt-3 text-sm leading-6 text-zinc-600">
                 Connect Slack and one source of truth (docs or a repo), then ask the agent to answer common questions with citations.
