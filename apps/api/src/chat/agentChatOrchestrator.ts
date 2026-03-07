@@ -132,6 +132,16 @@ export async function handleInboundChatMessage(input: {
     };
 
     void runAgentTask(task.id, {
+      memoryContext: {
+        surface: msg.surface,
+        accountId: msg.accountId,
+        conversationId: msg.conversationId,
+        threadId: msg.threadId ?? null,
+        senderId: msg.senderId,
+        sessionId: msg.threadId
+          ? `${msg.surface}:${msg.accountId}:${msg.conversationId}:thread:${msg.threadId}`
+          : `${msg.surface}:${msg.accountId}:${msg.conversationId}:session`,
+      },
       onAck: async () => {
         await postAck({ steps: [] });
       },

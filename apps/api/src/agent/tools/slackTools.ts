@@ -87,14 +87,45 @@ export function registerSlackTools(registry: ToolRegistry): void {
           ok: true,
           message:
             "Canvas created, but Slack did not return a permalink (files.info/auth.test failed). Check Slack scopes (files:read) or workspace plan restrictions.",
-          metadata: { canvasId: canvas.canvasId, url: null, title, conversation },
+          metadata: {
+            canvasId: canvas.canvasId,
+            url: null,
+            title,
+            conversation,
+            artifacts: [
+              {
+                tool: "slack_canvas_publish",
+                kind: "document",
+                id: canvas.canvasId,
+                title,
+                container: "slack_canvas",
+                status: "created_without_url",
+              },
+            ],
+          },
         };
       }
 
       return {
         ok: true,
         message: `Canvas created: ${canvas.url}`,
-        metadata: { canvasId: canvas.canvasId, url: canvas.url, title, conversation },
+        metadata: {
+          canvasId: canvas.canvasId,
+          url: canvas.url,
+          title,
+          conversation,
+          artifacts: [
+            {
+              tool: "slack_canvas_publish",
+              kind: "document",
+              id: canvas.canvasId,
+              url: canvas.url,
+              title,
+              container: "slack_canvas",
+              status: "created",
+            },
+          ],
+        },
       };
     },
   });

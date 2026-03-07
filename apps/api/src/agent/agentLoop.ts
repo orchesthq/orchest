@@ -5,7 +5,7 @@ import {
   updateTaskStatus,
   completeTask,
 } from "../db/schema";
-import { loadAgentMemories } from "./memoryService";
+import { buildEpisodicMemoryContent, loadAgentMemories, type ConversationMemoryContext } from "./memoryService";
 import { createPlan } from "./planningService";
 import { summarizeResults } from "../services/openaiService";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
@@ -26,6 +26,7 @@ export type RunAgentTaskOptions = {
   onAck?: () => Promise<void>;
   onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
   onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
+  memoryContext?: ConversationMemoryContext;
 };
 
 export async function runAgentTask(
@@ -92,7 +93,15 @@ async function runAgentTaskLegacy(
       clientId: ctx.client.id,
       agentId: ctx.agent.id,
       memoryType: "episodic",
-      content: `Completed task ${taskId}:\n${summary}`,
+      content: buildEpisodicMemoryContent({
+        version: "v1",
+        taskId,
+        summary,
+        subjectHints: inferSubjectHints(ctx.task.input),
+        context: options?.memoryContext,
+        executedCount: executed.length,
+        createdAtIso: new Date().toISOString(),
+      }),
     });
 
     return { taskId, plan, executed, summary };
@@ -105,6 +114,17 @@ async function runAgentTaskLegacy(
     }
     throw err;
   }
+}
+
+function inferSubjectHints(taskText: string): string[] {
+  const tokens = String(taskText ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_\-/\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+  const stop = new Set(["the", "and", "for", "with", "this", "that", "from", "your", "about", "have", "agent"]);
+  return Array.from(new Set(tokens.filter((t) => !stop.has(t)))).slice(0, 12);
 }
 
 function safeJson(v: unknown): string {

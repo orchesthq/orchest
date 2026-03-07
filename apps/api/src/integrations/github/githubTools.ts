@@ -146,7 +146,20 @@ export async function create_branch(
     const baseRef = await getRef(creds.token, repo, input.base);
     const baseSha = baseRef.object.sha;
     await createRef(creds.token, repo, input.branch, baseSha);
-    return { ok: true, message: `Created branch '${input.branch}' from '${input.base}'.` };
+    return {
+      ok: true,
+      message: `Created branch '${input.branch}' from '${input.base}'.`,
+      metadata: {
+        artifacts: [
+          {
+            tool: "create_branch",
+            kind: "branch",
+            ref: input.branch,
+            metadata: { base: input.base, repo },
+          },
+        ],
+      },
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/reference already exists|already exists/i.test(msg)) {
@@ -223,7 +236,18 @@ export async function create_file_and_commit(
     return {
       ok: true,
       message: `Created ${input.path} and committed: ${input.message}`,
-      metadata: { files: [input.path] },
+      metadata: {
+        files: [input.path],
+        artifacts: [
+          {
+            tool: "create_file_and_commit",
+            kind: "code_change",
+            path: input.path,
+            ref: input.branch,
+            metadata: { repo, message: input.message },
+          },
+        ],
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -297,7 +321,21 @@ export async function open_pull_request(
     return {
       ok: true,
       message: `Opened PR #${pr.number}: ${input.title} – ${pr.html_url}`,
-      metadata: { url: pr.html_url, number: pr.number },
+      metadata: {
+        url: pr.html_url,
+        number: pr.number,
+        artifacts: [
+          {
+            tool: "open_pull_request",
+            kind: "pull_request",
+            id: String(pr.number),
+            url: pr.html_url,
+            ref: input.branch,
+            title: input.title,
+            metadata: { base: input.base, repo },
+          },
+        ],
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -764,7 +802,16 @@ export async function github_apply_patch(
     return {
       ok: true,
       message: `Applied patch to ${changedFiles.length} file(s) and committed: ${input.message}`,
-      metadata: { files: changedFiles },
+      metadata: {
+        files: changedFiles,
+        artifacts: changedFiles.map((path) => ({
+          tool: "github_apply_patch",
+          kind: "code_change",
+          path,
+          ref: input.branch,
+          metadata: { repo, message: input.message },
+        })),
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -818,11 +865,17 @@ export async function github_search_code(
   const repo = creds.repo;
 
   try {
-    const results = await searchCode(creds.token, repo, input.query);
+    // searchCode already appends repo:<owner/name>; strip caller-provided repo qualifiers
+    // so queries remain stable across conversation turns.
+    const cleanedQuery = String(input.query ?? "")
+      .replace(/\brepo:[^\s]+/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const results = await searchCode(creds.token, repo, cleanedQuery);
     return {
       ok: true,
       message: `Search returned ${results.length} results.`,
-      metadata: { query: input.query, results },
+      metadata: { query: cleanedQuery, results },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

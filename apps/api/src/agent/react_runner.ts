@@ -5,6 +5,7 @@ import type { ToolAccessSummary } from "./tools/toolInventory";
 import { getCapability } from "./capabilities/capabilityRegistry";
 import { getEnabledToolGuides } from "./tools/toolGuides";
 import { formatToolAccessSummary } from "./tools/toolInventory";
+import type { ToolArtifactRecord } from "./memoryService";
 
 type ReActOptions = {
   taskId: string;
@@ -22,6 +23,13 @@ type ReActOptions = {
 };
 
 type ExecutedStep = { step: string; result: string };
+export type ToolExecutionRecord = {
+  tool: string;
+  ok: boolean;
+  args: Record<string, unknown>;
+  message: string;
+  artifacts: ToolArtifactRecord[];
+};
 const CODE_WRITE_TOOLS = new Set(["github_apply_patch", "create_file_and_commit"]);
 
 function synthesizeStatusFromToolCalls(calls: Array<{ name: string; arguments: Record<string, unknown> }>): string {
@@ -108,7 +116,11 @@ function readIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-export async function runReActLoop(input: ReActOptions): Promise<{ final: string; executed: ExecutedStep[] }> {
+export async function runReActLoop(input: ReActOptions): Promise<{
+  final: string;
+  executed: ExecutedStep[];
+  toolExecutions: ToolExecutionRecord[];
+}> {
   const maxIterations = input.maxIterations ?? readIntEnv("ORCHEST_AGENT_MAX_ITERATIONS", 20);
   const maxToolCalls = input.maxToolCalls ?? readIntEnv("ORCHEST_AGENT_MAX_TOOL_CALLS", 30);
   const tools = input.registry.toOpenAiTools();
@@ -178,6 +190,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   ];
 
   const executed: ExecutedStep[] = [];
+  const toolExecutions: ToolExecutionRecord[] = [];
   const usedTools = new Set<string>();
   let toolCalls = 0;
   let didCritique = false;
@@ -212,6 +225,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
             final:
               "Stopped: client knowledge base grounding was required, but kb_search was not executed after multiple attempts.",
             executed,
+            toolExecutions,
           };
         }
         messages.push({
@@ -242,6 +256,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
               why +
               " Please retry with narrower scope or verify GitHub write permissions.",
             executed,
+            toolExecutions,
           };
         }
         const failureHints =
@@ -313,7 +328,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
         continue;
       }
       console.log("[agent][react] done", { taskId: input.taskId, iterations: i + 1, toolCalls, ms: Date.now() - iterStart });
-      return { final: resp.final, executed };
+      return { final: resp.final, executed, toolExecutions };
     }
 
     messages.push(resp.assistantMessage);
@@ -335,7 +350,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
     for (const call of resp.toolCalls) {
       toolCalls++;
       if (toolCalls > maxToolCalls) {
-        return { final: "Stopped: exceeded maximum tool calls while working on this task.", executed };
+        return { final: "Stopped: exceeded maximum tool calls while working on this task.", executed, toolExecutions };
       }
 
       const toolStart = Date.now();
@@ -346,6 +361,13 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
 
       usedTools.add(call.name);
       executed.push({ step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`, result: toolResult.message });
+      toolExecutions.push({
+        tool: call.name,
+        ok: Boolean(toolResult.ok),
+        args: (call.arguments ?? {}) as Record<string, unknown>,
+        message: toolResult.message,
+        artifacts: extractToolArtifactsFromResult(toolResult, call.name),
+      });
       if (CODE_WRITE_TOOLS.has(call.name)) {
         if (toolResult.ok) {
           successfulCodeWrites += 1;
@@ -362,6 +384,36 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
     }
   }
 
-  return { final: lastDraftFinal ?? "Stopped: exceeded maximum iterations while working on this task.", executed };
+  return {
+    final: lastDraftFinal ?? "Stopped: exceeded maximum iterations while working on this task.",
+    executed,
+    toolExecutions,
+  };
+}
+
+function extractToolArtifactsFromResult(result: ToolResult, toolName: string): ToolArtifactRecord[] {
+  const md = result.metadata ?? {};
+  const raw = (md as any).artifacts;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, 20)
+    .map((a: any) => {
+      if (!a || typeof a !== "object") return null;
+      const tool = typeof a.tool === "string" && a.tool.trim() ? a.tool.trim() : toolName;
+      const out: ToolArtifactRecord = { tool };
+      if (typeof a.kind === "string") out.kind = a.kind;
+      if (typeof a.id === "string") out.id = a.id;
+      if (typeof a.url === "string") out.url = a.url;
+      if (typeof a.title === "string") out.title = a.title;
+      if (typeof a.ref === "string") out.ref = a.ref;
+      if (typeof a.path === "string") out.path = a.path;
+      if (typeof a.container === "string") out.container = a.container;
+      if (typeof a.status === "string") out.status = a.status;
+      if (a.metadata && typeof a.metadata === "object" && !Array.isArray(a.metadata)) {
+        out.metadata = a.metadata as Record<string, unknown>;
+      }
+      return out;
+    })
+    .filter((x): x is ToolArtifactRecord => Boolean(x));
 }
 

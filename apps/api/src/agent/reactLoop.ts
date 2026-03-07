@@ -1,7 +1,12 @@
-import { loadAgentMemories } from "./memoryService";
+import {
+  buildEpisodicMemoryContent,
+  loadAgentMemoriesForTask,
+  type ConversationMemoryContext,
+  type ToolArtifactRecord,
+} from "./memoryService";
 import { addAgentMemoryScoped, completeTask, failTask, getTaskContextById, updateTaskStatus } from "../db/schema";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
-import { runReActLoop } from "./react_runner";
+import { runReActLoop, type ToolExecutionRecord } from "./react_runner";
 import { classifyCapabilities, finalizeAgentChatResponse } from "../services/openaiService";
 import { getToolAccessSummary } from "./tools/toolInventory";
 import { selectCapabilities } from "./capabilities/selector";
@@ -19,6 +24,7 @@ export type RunAgentTaskOptions = {
   onAck?: () => Promise<void>;
   onPlanReady?: (plan: { steps: string[]; notes?: string }) => Promise<void>;
   onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
+  memoryContext?: ConversationMemoryContext;
 };
 
 export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOptions): Promise<AgentExecutionResult> {
@@ -28,10 +34,11 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
   try {
     await updateTaskStatus(taskId, "running");
 
-    const memories = await loadAgentMemories({
+    const memories = await loadAgentMemoriesForTask({
       clientId: ctx.client.id,
       agentId: ctx.agent.id,
-      limit: 50,
+      taskText: ctx.task.input,
+      context: options?.memoryContext,
     });
 
     if (options?.onAck) {
@@ -67,7 +74,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           `NOTE: This request maps to capability '${primary}', but it's currently blocked: ${check.reason}\n` +
           `Ask the user to connect/upgrade the required tool access and stop.`;
         // Pass constrainedTaskInput to the runner (do not mutate ctx).
-        const { final, executed } = await runReActLoop({
+        const { final, executed, toolExecutions } = await runReActLoop({
           taskId,
           clientId: ctx.client.id,
           agentId: ctx.agent.id,
@@ -96,14 +103,23 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           clientId: ctx.client.id,
           agentId: ctx.agent.id,
           memoryType: "episodic",
-          content: `Completed task ${taskId}:\n${finalized}`,
+          content: buildEpisodicMemoryContent({
+            version: "v1",
+            taskId,
+            summary: finalized,
+            subjectHints: inferSubjectHints(taskInput),
+            context: options?.memoryContext,
+            artifacts: collectArtifactsFromExecutions(toolExecutions),
+            executedCount: executed.length,
+            createdAtIso: new Date().toISOString(),
+          }),
         });
 
         return { taskId, executed, summary: finalized };
       }
     }
 
-    const { final, executed } = await runReActLoop({
+    const { final, executed, toolExecutions } = await runReActLoop({
       taskId,
       clientId: ctx.client.id,
       agentId: ctx.agent.id,
@@ -132,7 +148,16 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       clientId: ctx.client.id,
       agentId: ctx.agent.id,
       memoryType: "episodic",
-      content: `Completed task ${taskId}:\n${finalized}`,
+      content: buildEpisodicMemoryContent({
+        version: "v1",
+        taskId,
+        summary: finalized,
+        subjectHints: inferSubjectHints(taskInput),
+        context: options?.memoryContext,
+        artifacts: collectArtifactsFromExecutions(toolExecutions),
+        executedCount: executed.length,
+        createdAtIso: new Date().toISOString(),
+      }),
     });
 
     return { taskId, executed, summary: finalized };
@@ -145,5 +170,34 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
     }
     throw err;
   }
+}
+
+function collectArtifactsFromExecutions(executions: ToolExecutionRecord[]): ToolArtifactRecord[] {
+  const out: ToolArtifactRecord[] = [];
+  for (const e of executions) {
+    if (Array.isArray(e.artifacts) && e.artifacts.length > 0) {
+      for (const a of e.artifacts) out.push(a);
+      continue;
+    }
+    // Fallback record for tools without explicit artifacts yet.
+    out.push({
+      tool: e.tool,
+      kind: "tool_action",
+      status: e.ok ? "ok" : "failed",
+      metadata: { message: e.message.slice(0, 300) },
+    });
+  }
+  return out.slice(0, 40);
+}
+
+function inferSubjectHints(taskText: string): string[] {
+  const tokens = String(taskText ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_\-/\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+  const stop = new Set(["the", "and", "for", "with", "this", "that", "from", "your", "about", "have", "agent"]);
+  return Array.from(new Set(tokens.filter((t) => !stop.has(t)))).slice(0, 12);
 }
 
