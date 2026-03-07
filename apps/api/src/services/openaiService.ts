@@ -455,9 +455,7 @@ export async function generatePlanAck(input: {
 }): Promise<string> {
   const cfg = await getOpenAiConfig();
   if (!cfg) {
-    if (input.plan.steps.length === 0) return "On it.";
-    const steps = input.plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-    return `On it.\n\nPlan:\n${steps}`;
+    return "On it - I'll look this up and come back with one answer.";
   }
 
   const profileBlock =
@@ -472,7 +470,8 @@ export async function generatePlanAck(input: {
     "Write a natural, human acknowledgement that you’re starting the task.",
     "Use the agent’s profile memories to shape voice and phrasing. Do not be robotic.",
     "Do not mention internal tooling. Speak like a colleague (e.g. 'I’ll take a look at the repo' not 'I will use tools').",
-    "Keep it short: 1–2 sentences, then (if steps are provided) a numbered plan list.",
+    "Keep it to exactly one short sentence.",
+    "Do NOT answer the task itself and do NOT include plans, bullets, or numbered steps.",
     "No JSON, no code fences.",
   ].join("\n");
 
@@ -499,13 +498,28 @@ export async function generatePlanAck(input: {
   });
 
   const content = json?.choices?.[0]?.message?.content;
-  if (typeof content === "string" && content.trim()) return content.trim();
-  return input.plan.steps.length === 0 ? "On it." : `On it.\n\nPlan:\n${steps}`;
+  if (typeof content === "string" && content.trim()) return clampAckToSingleSentence(content);
+  return "On it - I'll look this up and come back with one answer.";
 }
 
 // Backwards-compatible alias (prefer generatePlanAck).
 export async function generateSlackPlanAck(input: Parameters<typeof generatePlanAck>[0]): Promise<string> {
   return await generatePlanAck(input);
+}
+
+function clampAckToSingleSentence(raw: string): string {
+  const fallback = "On it - I'll look this up and come back with one answer.";
+  const text = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return fallback;
+
+  // Keep only the first sentence to prevent accidental "first full answer" behavior.
+  const first = text.match(/^[^.!?]{1,180}[.!?]/)?.[0] ?? text.slice(0, 180).trim();
+  const clean = first.replace(/^[-*]\s+/, "").trim();
+  if (!clean) return fallback;
+
+  const wordCount = clean.split(/\s+/).filter(Boolean).length;
+  if (wordCount > 30) return fallback;
+  return clean;
 }
 
 export async function finalizeAgentChatResponse(input: {
