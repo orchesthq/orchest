@@ -220,7 +220,11 @@ export async function create_file_and_commit(
     );
     await updateRef(creds.token, repo, input.branch, newCommit.sha);
 
-    return { ok: true, message: `Created ${input.path} and committed: ${input.message}` };
+    return {
+      ok: true,
+      message: `Created ${input.path} and committed: ${input.message}`,
+      metadata: { files: [input.path] },
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, message: `Failed to create file and commit: ${msg}` };
@@ -535,14 +539,14 @@ export async function github_list_changed_files(
 }
 
 function parseUnifiedDiff(patch: string): {
-  files: Array<{ path: string; hunks: Array<{ lines: string[] }> }>;
+  files: Array<{ path: string; hunks: Array<{ header: string; lines: string[] }> }>;
   sawHunkHeader: boolean;
 } {
   const text = String(patch ?? "");
   const lines = text.split(/\r?\n/);
-  const files: Array<{ path: string; hunks: Array<{ lines: string[] }> }> = [];
-  let current: { path: string; hunks: Array<{ lines: string[] }> } | null = null;
-  let currentHunk: { lines: string[] } | null = null;
+  const files: Array<{ path: string; hunks: Array<{ header: string; lines: string[] }> }> = [];
+  let current: { path: string; hunks: Array<{ header: string; lines: string[] }> } | null = null;
+  let currentHunk: { header: string; lines: string[] } | null = null;
   let sawHunkHeader = false;
   let lastOldPath: string | null = null;
 
@@ -601,7 +605,7 @@ function parseUnifiedDiff(patch: string): {
     if (line.startsWith("@@")) {
       sawHunkHeader = true;
       flushHunk();
-      currentHunk = { lines: [] };
+      currentHunk = { header: line, lines: [] };
       continue;
     }
     if (!currentHunk) continue;
@@ -615,41 +619,84 @@ function parseUnifiedDiff(patch: string): {
   return { files: files.filter((f) => f.hunks.length > 0), sawHunkHeader };
 }
 
-function applyHunksToText(original: string, hunks: Array<{ lines: string[] }>): string {
-  const origLines = original.split(/\r?\n/);
-  let idx = 0;
-  const out: string[] = [];
+function hunkOldAndNewLines(hunk: { lines: string[] }): { oldLines: string[]; newLines: string[] } {
+  const oldLines: string[] = [];
+  const newLines: string[] = [];
+  for (const raw of hunk.lines) {
+    const tag = raw[0];
+    const content = raw.slice(1);
+    if (tag === " " || tag === "-") oldLines.push(content);
+    if (tag === " " || tag === "+") newLines.push(content);
+  }
+  return { oldLines, newLines };
+}
+
+function parseHunkOldStart(header: string): number | null {
+  const m = String(header ?? "").match(/^@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@/);
+  if (!m?.[1]) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function matchAt(lines: string[], at: number, needle: string[]): boolean {
+  if (needle.length === 0) return true;
+  if (at < 0 || at + needle.length > lines.length) return false;
+  for (let i = 0; i < needle.length; i++) {
+    if ((lines[at + i] ?? "") !== (needle[i] ?? "")) return false;
+  }
+  return true;
+}
+
+function findHunkMatch(lines: string[], oldLines: string[], preferredStart: number | null): number {
+  if (oldLines.length === 0) {
+    if (preferredStart == null) return Math.max(0, lines.length);
+    return Math.max(0, Math.min(preferredStart, lines.length));
+  }
+
+  // 1) Try near the hunk's declared old-file line for standard unified diffs.
+  if (preferredStart != null) {
+    const maxDrift = 250;
+    for (let drift = 0; drift <= maxDrift; drift++) {
+      const down = preferredStart + drift;
+      if (matchAt(lines, down, oldLines)) return down;
+      if (drift === 0) continue;
+      const up = preferredStart - drift;
+      if (matchAt(lines, up, oldLines)) return up;
+    }
+  }
+
+  // 2) Fallback to full scan (supports non-numeric @@ headers like '@@ function foo').
+  for (let i = 0; i <= lines.length - oldLines.length; i++) {
+    if (matchAt(lines, i, oldLines)) return i;
+  }
+  return -1;
+}
+
+function applyHunksToText(original: string, hunks: Array<{ header: string; lines: string[] }>): string {
+  const lines = original.split(/\r?\n/);
+  let lineDelta = 0;
 
   const fail = (msg: string) => {
     throw new Error(`Patch did not apply cleanly: ${msg}`);
   };
 
-  for (const hunk of hunks) {
-    for (const raw of hunk.lines) {
-      const tag = raw[0];
-      const content = raw.slice(1);
-      if (tag === " ") {
-        const got = origLines[idx] ?? "";
-        if (got !== content) fail(`context mismatch at line ${idx + 1}`);
-        out.push(got);
-        idx += 1;
-        continue;
-      }
-      if (tag === "-") {
-        const got = origLines[idx] ?? "";
-        if (got !== content) fail(`delete mismatch at line ${idx + 1}`);
-        idx += 1;
-        continue;
-      }
-      if (tag === "+") {
-        out.push(content);
-        continue;
-      }
+  for (let h = 0; h < hunks.length; h++) {
+    const hunk = hunks[h]!;
+    const { oldLines, newLines } = hunkOldAndNewLines(hunk);
+    const oldStart = parseHunkOldStart(hunk.header);
+    const preferred = oldStart == null ? null : Math.max(0, oldStart - 1 + lineDelta);
+    const at = findHunkMatch(lines, oldLines, preferred);
+
+    if (at < 0) {
+      const targetLine = oldStart == null ? "unknown" : String(oldStart);
+      fail(`context mismatch near hunk ${h + 1} (target old line ${targetLine})`);
     }
+
+    lines.splice(at, oldLines.length, ...newLines);
+    lineDelta += newLines.length - oldLines.length;
   }
-  // Append remaining original.
-  out.push(...origLines.slice(idx));
-  return out.join("\n");
+
+  return lines.join("\n");
 }
 
 export async function github_apply_patch(

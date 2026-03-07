@@ -22,6 +22,7 @@ type ReActOptions = {
 };
 
 type ExecutedStep = { step: string; result: string };
+const CODE_WRITE_TOOLS = new Set(["github_apply_patch", "create_file_and_commit"]);
 
 function synthesizeStatusFromToolCalls(calls: Array<{ name: string; arguments: Record<string, unknown> }>): string {
   const c = calls[0];
@@ -181,6 +182,12 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
   let toolCalls = 0;
   let didCritique = false;
   let groundingAttempts = 0;
+  let codeWriteRecoveryAttempts = 0;
+  let codeScopeCheckAttempts = 0;
+  let successfulCodeWrites = 0;
+  let successfulPatchWrites = 0;
+  let successfulCreateWrites = 0;
+  const recentCodeWriteFailures: string[] = [];
   let lastDraftFinal: string | null = null;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -218,6 +225,71 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
           ].join("\n"),
         });
         continue;
+      }
+
+      const needsCodeWrite =
+        Array.isArray(input.capabilities) &&
+        (input.capabilities as any[]).includes("change_code");
+      if (needsCodeWrite && successfulCodeWrites === 0) {
+        codeWriteRecoveryAttempts += 1;
+        if (codeWriteRecoveryAttempts > 3) {
+          const lastFailure =
+            recentCodeWriteFailures.length > 0 ? recentCodeWriteFailures[recentCodeWriteFailures.length - 1] : "";
+          const why = lastFailure ? ` Last failure: ${lastFailure}` : "";
+          return {
+            final:
+              "Stopped: no code changes were successfully written after multiple attempts." +
+              why +
+              " Please retry with narrower scope or verify GitHub write permissions.",
+            executed,
+          };
+        }
+        const failureHints =
+          recentCodeWriteFailures.length === 0
+            ? "No write tool was successfully executed yet."
+            : `Recent write failure(s):\n- ${recentCodeWriteFailures.slice(-2).join("\n- ")}`;
+        messages.push({
+          role: "user",
+          content: [
+            "You have not completed this coding task yet because no code write succeeded.",
+            failureHints,
+            "Recovery steps:",
+            "1) Re-read the target file(s) before editing.",
+            "2) Use github_apply_patch with smaller hunks and stable context lines.",
+            "3) If patching fails with context mismatch, refresh file content and retry with a tighter patch.",
+            "4) Only finalize after at least one successful write tool call.",
+          ].join("\n"),
+        });
+        continue;
+      }
+
+      // Prevent dead-end outputs where only brand-new files are created but nothing is wired.
+      if (needsCodeWrite && successfulCreateWrites > 0 && successfulPatchWrites === 0) {
+        codeWriteRecoveryAttempts += 1;
+        if (codeWriteRecoveryAttempts <= 3) {
+          messages.push({
+            role: "user",
+            content: [
+              "Quality gate failed: you created new file(s) but did not patch an existing entry point.",
+              "Wire the new code into the current codepath by editing existing file(s) with github_apply_patch.",
+              "Only finalize after integration is complete.",
+            ].join("\n"),
+          });
+          continue;
+        }
+      }
+      if (needsCodeWrite && successfulCodeWrites > 0 && !usedTools.has("github_list_changed_files")) {
+        codeScopeCheckAttempts += 1;
+        if (codeScopeCheckAttempts <= 2) {
+          messages.push({
+            role: "user",
+            content: [
+              "Before finalizing, run github_list_changed_files for base...head and verify scope matches the request.",
+              "If scope is too broad, narrow the patch before finalizing.",
+            ].join("\n"),
+          });
+          continue;
+        }
       }
 
       if (!didCritique) {
@@ -274,6 +346,17 @@ export async function runReActLoop(input: ReActOptions): Promise<{ final: string
 
       usedTools.add(call.name);
       executed.push({ step: `${call.name}(${JSON.stringify(redactArgs(call.arguments))})`, result: toolResult.message });
+      if (CODE_WRITE_TOOLS.has(call.name)) {
+        if (toolResult.ok) {
+          successfulCodeWrites += 1;
+          if (call.name === "github_apply_patch") successfulPatchWrites += 1;
+          if (call.name === "create_file_and_commit") successfulCreateWrites += 1;
+        } else {
+          const clipped = String(toolResult.message ?? "").trim();
+          if (clipped) recentCodeWriteFailures.push(clipped.slice(0, 240));
+          if (recentCodeWriteFailures.length > 6) recentCodeWriteFailures.splice(0, recentCodeWriteFailures.length - 6);
+        }
+      }
 
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(compactToolResultForModel(toolResult)) });
     }
