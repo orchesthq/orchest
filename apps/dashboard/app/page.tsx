@@ -50,9 +50,11 @@ export default async function Home() {
       <div className="min-h-screen bg-zinc-50">
         <div className="mx-auto max-w-4xl px-6 py-16">
           <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">
-            Welcome back
+            Welcome back to Orchest HQ
           </h1>
-          <p className="mt-3 text-zinc-600">Jump into your client dashboard.</p>
+          <p className="mt-3 text-zinc-600">
+            Youre in the dashboardmanage agents, integrations, and activity.
+          </p>
           <div className="mt-8">
             <Link
               href="/app"
@@ -70,14 +72,13 @@ export default async function Home() {
     <div className="min-h-screen bg-zinc-50">
       <main className="mx-auto max-w-5xl px-6 py-16">
         <div className="rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <p className="text-sm font-medium text-zinc-500">Orchest</p>
+          <p className="text-sm font-medium text-zinc-500">Orchest HQ</p>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
-            Put an AI agent in your Slack workflow.
+            Welcome to Orchest HQ.
           </h1>
           <p className="mt-4 max-w-2xl text-zinc-600">
-            Orchest helps startups and tech teams deploy safe, auditable agents that
-            answer questions from your knowledge base and help with lightweight coding
-            tasks—right where your team already works.
+            Orchest is the agent runtime. Orchest HQ is where you set things up—then
+            your team works with agents in Slack.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
