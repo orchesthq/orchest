@@ -130,8 +130,9 @@ async function resolveSingleSourceContext(input: {
         conversationId: input.msg.conversationId,
         threadId: input.msg.threadId,
         maxMessages: 80,
-        // DM events use per-message thread_ts; strict mode there can hide valid recent conversation context.
-        strictThreadOnly: input.msg.kind !== "dm",
+        // Be strict only when we are actually in a threaded sub-conversation.
+        // In DMs without thread replies, threadId equals ts and strict filtering would hide conversation context.
+        strictThreadOnly: input.msg.threadId !== input.msg.ts,
       })
       .catch(() => "");
     const cleaned = String(threadText ?? "").trim();

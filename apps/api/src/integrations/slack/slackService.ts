@@ -342,6 +342,7 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
   const transport = createSlackTransport({ token: installation.bot_access_token });
 
   if (event.type === "message" && event.channel_type === "im") {
+    const dmThreadTs = typeof event.thread_ts === "string" && event.thread_ts ? event.thread_ts : event.ts;
     const link = await getSlackAgentLinkByDmChannelId({
       teamId: installation.team_id,
       botKey,
@@ -364,7 +365,7 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
         surface: "slack",
         accountId,
         conversationId: event.channel,
-        threadId: event.ts,
+        threadId: dmThreadTs,
         senderId: event.user,
         text: taskText,
         ts: event.ts,
@@ -377,6 +378,7 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
           iconUrl: link.icon_url ?? null,
           slack_request_user_id: event.user,
           slack_channel_id: event.channel,
+          slack_thread_ts: dmThreadTs,
         },
       },
       transport,
