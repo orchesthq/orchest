@@ -3,6 +3,7 @@ import { authOptions } from "@/auth";
 import { apiFetchForClient } from "@/lib/apiForClient";
 import { getClientIdFromSession } from "@/lib/session";
 import { ORCHEST_PERSONAS } from "@/lib/personas";
+import { getTemplateByRole } from "@/lib/agentTemplates";
 import Image from "next/image";
 import { AgentCardActions } from "./AgentCardActions";
 
@@ -138,7 +139,9 @@ export default async function AgentsPage() {
                 {agent ? (
                   <div className="flex items-center justify-between">
                     <div className="text-zinc-700">Role</div>
-                    <div className="text-zinc-600">{agent.role}</div>
+                    <div className="text-zinc-600">
+                      {getTemplateByRole(agent.role)?.label ?? agent.role}
+                    </div>
                   </div>
                 ) : null}
               </div>
