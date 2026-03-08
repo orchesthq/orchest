@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ToolRegistry, type ToolContext } from "./registry";
-import { listAgentMemoriesByTypeScoped } from "../../db/schema";
+import { getTaskContextById, listAgentMemoriesByTypeScoped } from "../../db/schema";
 import { parseEpisodicMemoryContent } from "../memoryService";
 import {
   create_branch,
@@ -15,6 +15,20 @@ import {
   github_search_code,
   open_pull_request,
 } from "../../integrations/github/githubTools";
+
+const CONTINUATION_LIKE =
+  /\b(continue|pick up|as discussed|same branch|where we left off|remember|last (time|week|day)|we were working on)\b/i;
+const EXPLICIT_NEW_BRANCH_INTENT =
+  /\b(clean branch|new branch|separate branch|split into (a )?new branch|isolate (this )?branch|separate pr|new pr)\b/i;
+
+async function getCurrentTaskInput(taskId: string): Promise<string> {
+  try {
+    const ctx = await getTaskContextById(taskId);
+    return String(ctx.task.input ?? "");
+  } catch {
+    return "";
+  }
+}
 
 async function findRecentRepoBranchHint(
   ctx: ToolContext,
@@ -54,9 +68,19 @@ export function registerGitHubTools(registry: ToolRegistry): void {
       branch: z.string().min(1),
     }),
     execute: async (ctx: ToolContext, args) => {
+      const taskInput = await getCurrentTaskInput(ctx.taskId);
+      const explicitNewBranch = EXPLICIT_NEW_BRANCH_INTENT.test(taskInput);
+      const continuationLike = CONTINUATION_LIKE.test(taskInput);
+
+      // User explicitly requested branch isolation/new branch: never block creation.
+      if (explicitNewBranch) {
+        return await create_branch(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+      }
+
       const requestedRepo = String(args.repo ?? "").trim();
       const requestedBranch = String(args.branch ?? "").trim();
-      if (requestedRepo && requestedBranch) {
+      // Reuse enforcement should only happen on continuation-like follow-ups.
+      if (continuationLike && requestedRepo && requestedBranch) {
         const hint = await findRecentRepoBranchHint(ctx, requestedRepo);
         if (hint && hint.branch !== requestedBranch) {
           const existsCheck = await github_branch_exists({ repo: requestedRepo, branch: hint.branch }, {
