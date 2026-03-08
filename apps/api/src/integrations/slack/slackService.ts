@@ -42,11 +42,6 @@ let slackBotAppsCache:
     }
   | undefined;
 
-const SLACK_DEBUG = true;
-function slackDebugLog(...args: any[]) {
-  if (SLACK_DEBUG) console.log(...args);
-}
-
 function requireSlackRedirectUri(): string {
   const v = process.env.SLACK_REDIRECT_URI;
   if (!v) throw new SlackConfigError("SLACK_REDIRECT_URI is not configured");
@@ -343,13 +338,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
 
   if (event.type === "message" && event.channel_type === "im") {
     const dmThreadTs = typeof event.thread_ts === "string" && event.thread_ts ? event.thread_ts : event.ts;
-    slackDebugLog("[slack] inbound dm", {
-      channel: event.channel,
-      ts: event.ts,
-      thread_ts: event.thread_ts ?? null,
-      resolvedThreadId: dmThreadTs,
-      user: event.user,
-    });
     const link = await getSlackAgentLinkByDmChannelId({
       teamId: installation.team_id,
       botKey,
@@ -402,12 +390,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
     event.thread_ts &&
     !event.subtype
   ) {
-    slackDebugLog("[slack] inbound channel/group reply", {
-      channel: event.channel,
-      ts: event.ts,
-      thread_ts: event.thread_ts ?? null,
-      user: event.user,
-    });
     const sub = getThreadSubscription({
       surface: "slack",
       accountId,
@@ -437,7 +419,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
     });
     if (!link || link.agent_id !== sub.agentId) return;
 
-    slackDebugLog("[slack] handling subscribed thread reply", { channel: event.channel, threadTs: event.thread_ts });
     await handleInboundChatMessage({
       msg: {
         surface: "slack",
@@ -465,12 +446,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
   }
 
   if (event.type === "app_mention") {
-    slackDebugLog("[slack] inbound app_mention", {
-      channel: event.channel,
-      ts: event.ts,
-      thread_ts: event.thread_ts ?? null,
-      user: event.user,
-    });
     const cleaned = normalizeSlackText(event.text ?? "");
     if (!cleaned) return;
 
@@ -499,12 +474,6 @@ export async function handleSlackEvent(input: { payload: any }): Promise<void> {
     });
 
     const replyThreadTs = event.thread_ts ?? event.ts;
-    slackDebugLog("[slack] app_mention dispatch", {
-      channel: event.channel,
-      ts: event.ts,
-      threadId: replyThreadTs,
-      subscribedThreadId: actualThreadTs,
-    });
     await handleInboundChatMessage({
       msg: {
         surface: "slack",
