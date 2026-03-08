@@ -8,6 +8,11 @@ import {
 } from "../db/schema";
 
 const MEMORY_RECORD_PREFIX = "[[memory_record_v1]]";
+const CONTINUATION_LIKE = /\b(continue|pick up|as discussed|same branch|where we left off|remember|last (time|week|day)|we were working on)\b/i;
+
+export type MemoryContextPolicy = "session_primary" | "kb_plus_memory" | "kb_primary_memory_assist";
+export type ContextMode = "single_source" | "multi_source";
+export type SingleSourceType = "thread" | "external";
 
 export type ConversationMemoryContext = {
   surface?: string;
@@ -20,6 +25,11 @@ export type ConversationMemoryContext = {
    * Example: `slack:T123:C456:thread:1712345678.000100` or `slack:T123:D999:session`.
    */
   sessionId?: string;
+  contextPolicy?: MemoryContextPolicy;
+  contextMode?: ContextMode;
+  singleSourceType?: SingleSourceType;
+  hasActiveSession?: boolean;
+  sessionScore?: number;
 };
 
 export type ToolArtifactRecord = {
@@ -68,10 +78,17 @@ export async function loadAgentMemoriesForTask(input: {
   episodicCandidateLimit?: number;
   episodicTopK?: number;
 }): Promise<AgentMemoryRow[]> {
+  if (input.context?.contextMode === "single_source") {
+    return [];
+  }
+
+  const policy = input.context?.contextPolicy ?? "kb_primary_memory_assist";
+  const hasActiveSession = Boolean(input.context?.hasActiveSession);
+  const defaults = policyDefaults(policy, hasActiveSession);
   const profileLimit = input.profileLimit ?? 1;
-  const semanticLimit = input.semanticLimit ?? 8;
+  const semanticLimit = input.semanticLimit ?? defaults.semanticLimit;
   const episodicCandidateLimit = input.episodicCandidateLimit ?? 120;
-  const episodicTopK = input.episodicTopK ?? 10;
+  const episodicTopK = input.episodicTopK ?? defaults.episodicTopK;
 
   const [profiles, semantics, episodics] = await Promise.all([
     listAgentMemoriesByTypeScoped({
@@ -97,6 +114,8 @@ export async function loadAgentMemoriesForTask(input: {
   const rankedEpisodics = rankEpisodicMemories({
     taskText: input.taskText,
     context: input.context,
+    policy,
+    hasActiveSession,
     episodics,
   })
     .slice(0, episodicTopK)
@@ -148,12 +167,13 @@ export function parseEpisodicMemoryContent(content: string): EpisodicMemoryRecor
 function rankEpisodicMemories(input: {
   taskText: string;
   context?: ConversationMemoryContext;
+  policy: MemoryContextPolicy;
+  hasActiveSession: boolean;
   episodics: AgentMemoryRow[];
 }): Array<{ row: AgentMemoryRow; score: number }> {
   const queryTerms = extractTerms(input.taskText);
-  const continuationLike = /\b(continue|pick up|as discussed|remember|last (time|week|day)|we were working on)\b/i.test(
-    input.taskText
-  );
+  const continuationLike = CONTINUATION_LIKE.test(input.taskText);
+  const weights = policyWeights(input.policy, input.hasActiveSession);
 
   return input.episodics
     .map((row, idx) => {
@@ -161,31 +181,58 @@ function rankEpisodicMemories(input: {
       const haystack = `${row.content}\n${parsed?.summary ?? ""}\n${(parsed?.subjectHints ?? []).join(" ")}`.toLowerCase();
       const termHits = queryTerms.reduce((n, t) => (haystack.includes(t) ? n + 1 : n), 0);
       const maxHits = Math.max(1, queryTerms.length);
-      const termScore = Math.min(4, (termHits / maxHits) * 4);
+      const termScore = Math.min(4, (termHits / maxHits) * 4) * weights.term;
 
       // Recency bias from list order (already DESC by created_at).
-      const recencyScore = Math.max(0, 2 - idx / 30);
+      const recencyScore = Math.max(0, 2 - idx / 30) * weights.recency;
 
       const ctx = parsed?.context;
       let contextScore = 0;
-      if (input.context?.sessionId && ctx?.sessionId && input.context.sessionId === ctx.sessionId) contextScore += 8;
-      if (
-        input.context?.conversationId &&
-        ctx?.conversationId &&
-        input.context.conversationId === ctx.conversationId &&
-        input.context?.surface &&
-        ctx?.surface === input.context.surface
-      )
-        contextScore += 5;
-      if (input.context?.threadId && ctx?.threadId && input.context.threadId === ctx.threadId) contextScore += 6;
-      if (input.context?.senderId && ctx?.senderId && input.context.senderId === ctx.senderId) contextScore += 1.5;
-      if (input.context?.accountId && ctx?.accountId && input.context.accountId === ctx.accountId) contextScore += 1.5;
+      if (input.hasActiveSession) {
+        if (input.context?.threadId && ctx?.threadId && input.context.threadId === ctx.threadId) contextScore += 10;
+        if (input.context?.sessionId && ctx?.sessionId && input.context.sessionId === ctx.sessionId) contextScore += 8;
+        if (
+          input.context?.conversationId &&
+          ctx?.conversationId &&
+          input.context.conversationId === ctx.conversationId &&
+          input.context?.surface &&
+          ctx?.surface === input.context.surface
+        )
+          contextScore += 5;
+      }
+      if (input.context?.senderId && ctx?.senderId && input.context.senderId === ctx.senderId) contextScore += 1;
+      if (input.context?.accountId && ctx?.accountId && input.context.accountId === ctx.accountId) contextScore += 1;
+      contextScore *= weights.context;
 
-      const continuationBoost = continuationLike ? 2.5 : 0;
+      const continuationBoost = continuationLike ? 2.5 * weights.continuation : 0;
       const score = termScore + recencyScore + contextScore + continuationBoost;
       return { row, score };
     })
     .sort((a, b) => b.score - a.score);
+}
+
+function policyDefaults(
+  policy: MemoryContextPolicy,
+  hasActiveSession: boolean
+): { episodicTopK: number; semanticLimit: number } {
+  if (!hasActiveSession) {
+    return { episodicTopK: 4, semanticLimit: 10 };
+  }
+  if (policy === "session_primary") return { episodicTopK: 12, semanticLimit: 6 };
+  if (policy === "kb_plus_memory") return { episodicTopK: 8, semanticLimit: 8 };
+  return { episodicTopK: 5, semanticLimit: 10 };
+}
+
+function policyWeights(
+  policy: MemoryContextPolicy,
+  hasActiveSession: boolean
+): { context: number; term: number; recency: number; continuation: number } {
+  if (!hasActiveSession) {
+    return { context: 0.2, term: 1.0, recency: 1.15, continuation: 0.5 };
+  }
+  if (policy === "session_primary") return { context: 1.35, term: 1.0, recency: 1.0, continuation: 1.3 };
+  if (policy === "kb_plus_memory") return { context: 0.9, term: 1.1, recency: 1.0, continuation: 1.0 };
+  return { context: 0.35, term: 1.0, recency: 1.15, continuation: 0.7 };
 }
 
 function extractTerms(text: string): string[] {

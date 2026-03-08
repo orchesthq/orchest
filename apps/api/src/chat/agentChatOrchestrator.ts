@@ -4,7 +4,8 @@ import {
   listAgentMemoriesByTypeScoped,
 } from "../db/schema";
 import { runAgentTask } from "../agent/agentLoop";
-import { generatePlanAck, tryConversationalReply } from "../services/openaiService";
+import type { ContextMode, MemoryContextPolicy, SingleSourceType } from "../agent/memoryService";
+import { generateAgentNotice, generatePlanAck, tryConversationalReply } from "../services/openaiService";
 import type { ChatAuthor, ChatTransport, InboundChatMessage } from "./types";
 
 const DOC_LIKE =
@@ -15,6 +16,12 @@ const QUESTION_WORD =
   /\b(what|where|how|why|when|who)\b/i;
 const QUESTION_START =
   /^\s*(can you|could you|do you know|does it|is it possible|what's|whats|where's|wheres|how's|hows)\b/i;
+const CONTINUATION_LIKE =
+  /\b(continue|pick up|as discussed|same branch|where we left off|remember|last (time|week|day)|we were working on)\b/i;
+const SUMMARIZE_THREAD_LIKE =
+  /\b(summarize|summary|recap|tl;dr)\b.*\b(thread|conversation|chat)\b|\b(this|current)\s+(thread|conversation|chat)\b/i;
+const SUMMARIZE_EXTERNAL_LIKE =
+  /\b(summarize|summary|recap|tl;dr)\b.*\b(document|doc|file|text|content|notes|message)\b|\b(this)\s+(document|doc|file|text|content)\b/i;
 
 export type OrchestratorOptions = {
   /**
@@ -25,6 +32,142 @@ export type OrchestratorOptions = {
   forceConversational?: boolean;
   forceSuppressPlanAck?: boolean;
 };
+
+function decideContextRouting(input: {
+  msg: InboundChatMessage;
+  text: string;
+}): {
+  contextMode: ContextMode;
+  singleSourceType?: SingleSourceType;
+  hasActiveSession: boolean;
+  sessionScore: number;
+  contextPolicy: MemoryContextPolicy;
+} {
+  const t = String(input.text ?? "");
+
+  const summarizeThread = Boolean(input.msg.threadId) && SUMMARIZE_THREAD_LIKE.test(t);
+  if (summarizeThread) {
+    return {
+      contextMode: "single_source",
+      singleSourceType: "thread",
+      hasActiveSession: true,
+      sessionScore: 999,
+      contextPolicy: "session_primary",
+    };
+  }
+
+  const summarizeExternal = SUMMARIZE_EXTERNAL_LIKE.test(t) && !SUMMARIZE_THREAD_LIKE.test(t);
+  if (summarizeExternal) {
+    return {
+      contextMode: "single_source",
+      singleSourceType: "external",
+      hasActiveSession: false,
+      sessionScore: 0,
+      contextPolicy: "kb_primary_memory_assist",
+    };
+  }
+
+  let score = 0;
+
+  // Highest indicator: same thread continuity.
+  if (input.msg.threadId) score += 9;
+  // Explicit continuation language.
+  if (CONTINUATION_LIKE.test(t)) score += 5;
+  // In DMs, conversation continuity is still meaningful even without thread ids.
+  if (!input.msg.threadId && input.msg.kind === "dm") score += 2;
+  // Questions often imply immediate conversational continuity.
+  if (isQuestionLike(t)) score += 1;
+
+  const hasActiveSession = score >= 8;
+  if (!hasActiveSession) {
+    return {
+      contextMode: "multi_source",
+      hasActiveSession: false,
+      sessionScore: score,
+      contextPolicy: "kb_primary_memory_assist",
+    };
+  }
+
+  // If same thread or explicit continuation intent is present, session is primary.
+  if (input.msg.threadId || CONTINUATION_LIKE.test(t)) {
+    return {
+      contextMode: "multi_source",
+      hasActiveSession: true,
+      sessionScore: score,
+      contextPolicy: "session_primary",
+    };
+  }
+  return {
+    contextMode: "multi_source",
+    hasActiveSession: true,
+    sessionScore: score,
+    contextPolicy: "kb_plus_memory",
+  };
+}
+
+async function resolveSingleSourceContext(input: {
+  routing: ReturnType<typeof decideContextRouting>;
+  msg: InboundChatMessage;
+  transport: ChatTransport;
+}): Promise<{ ok: true; contextText: string } | { ok: false; fallbackMessage: string; context: string }> {
+  if (input.routing.singleSourceType === "thread") {
+    if (!input.msg.threadId) {
+      return {
+        ok: false,
+        fallbackMessage: "I couldn't identify which thread to summarize. Please ask from the target thread.",
+        context: "Could not identify a thread id for a thread-summary request.",
+      };
+    }
+    if (!input.transport.fetchThreadContext) {
+      return {
+        ok: false,
+        fallbackMessage: "I can't read thread history on this surface yet, so I can't safely summarize this thread.",
+        context: "Thread-summary request arrived on a surface without thread-history access.",
+      };
+    }
+    const threadText = await input.transport
+      .fetchThreadContext({
+        conversationId: input.msg.conversationId,
+        threadId: input.msg.threadId,
+        maxMessages: 25,
+      })
+      .catch(() => "");
+    const cleaned = String(threadText ?? "").trim();
+    if (!cleaned) {
+      return {
+        ok: false,
+        fallbackMessage:
+          "I couldn't fetch messages for this thread summary. Please retry in-thread or paste the content to summarize.",
+        context: "Thread-summary request failed because no thread content was retrieved.",
+      };
+    }
+    return { ok: true, contextText: cleaned };
+  }
+
+  if (input.routing.singleSourceType === "external") {
+    // Future-ready source keys for adapters that pass explicit external content.
+    const sourceKeys = ["source_text", "external_source_text", "document_text", "content_text"] as const;
+    for (const key of sourceKeys) {
+      const v = input.msg.context?.[key];
+      if (typeof v === "string" && v.trim()) {
+        const clipped = v.trim().slice(0, 40_000);
+        return { ok: true, contextText: `External source content:\n${clipped}` };
+      }
+    }
+    return {
+      ok: false,
+      fallbackMessage:
+        "I can't access external documents on this agent yet. Please paste the content to summarize or connect an external-source tool first.",
+      context: "External-source summary requested, but no external source content is available on this agent yet.",
+    };
+  }
+
+  return {
+    ok: false,
+    fallbackMessage: "I couldn't determine the requested single source. Please specify what to summarize.",
+    context: "Single-source mode was selected, but source type could not be determined.",
+  };
+}
 
 function isDocLike(text: string): boolean {
   return DOC_LIKE.test(String(text ?? ""));
@@ -69,9 +212,36 @@ export async function handleInboundChatMessage(input: {
       memoryType: "profile",
       limit: 10,
     }).catch(() => []);
+    const profileMemoryStrings = profileMemories.slice(0, 1).map((m) => m.content);
 
+    const generateNotice = async (context: string, fallback: string) => {
+      return await generateAgentNotice({
+        agentName: agent.name,
+        agentRole: agent.role,
+        systemPrompt: agent.system_prompt,
+        profileMemories: profileMemoryStrings,
+        context,
+        fallback,
+      }).catch(() => fallback);
+    };
+
+    const routing = decideContextRouting({ msg, text });
     let threadContext = "";
-    if (msg.threadId && transport.fetchThreadContext) {
+    let singleSourceContext = "";
+    if (routing.contextMode === "single_source") {
+      const resolved = await resolveSingleSourceContext({ routing, msg, transport });
+      if (!resolved.ok) {
+        const notice = await generateNotice(resolved.context, resolved.fallbackMessage);
+        await transport.postMessage({
+          conversationId: msg.conversationId,
+          threadId: msg.threadId,
+          text: notice,
+          author,
+        });
+        return;
+      }
+      singleSourceContext = `\n\nSource context (single source):\n${resolved.contextText}`;
+    } else if (msg.threadId && transport.fetchThreadContext) {
       threadContext = await transport
         .fetchThreadContext({
           conversationId: msg.conversationId,
@@ -84,7 +254,24 @@ export async function handleInboundChatMessage(input: {
     const task = await createTaskForAgentScoped({
       clientId: msg.clientId,
       agentId: agent.id,
-      taskInput: `${text}${threadContext}`,
+      taskInput:
+        `${text}${singleSourceContext || threadContext}` +
+        [
+          "",
+          "Context policy:",
+          `- contextMode: ${routing.contextMode}`,
+          `- contextPolicy: ${routing.contextPolicy}`,
+          `- hasActiveSession: ${routing.hasActiveSession ? "yes" : "no"}`,
+          `- sessionScore: ${routing.sessionScore}`,
+          ...(routing.singleSourceType ? [`- singleSourceType: ${routing.singleSourceType}`] : []),
+          ...(routing.contextMode === "single_source"
+            ? [
+                "- Use only the specified source context for factual content.",
+                "- Do not use episodic/semantic memory or KB to add extra facts.",
+                "- If required source content is missing, say so explicitly instead of guessing.",
+              ]
+            : ["- Use session memory strongly only when hasActiveSession is yes."]),
+        ].join("\n"),
     });
 
     let postedAck = false;
@@ -98,13 +285,18 @@ export async function handleInboundChatMessage(input: {
         systemPrompt: agent.system_prompt,
         taskText: text,
         plan,
-        profileMemories: profileMemories.slice(0, 1).map((m) => m.content),
+        profileMemories: profileMemoryStrings,
       }).catch(() => null);
 
       await transport.postMessage({
         conversationId: msg.conversationId,
         threadId: msg.threadId,
-        text: ack || "On it - I'll look this up and come back with one answer.",
+        text:
+          ack ||
+          (await generateNotice(
+            "Acknowledge starting work on the user's request and promise a single follow-up answer.",
+            "On it - I'll look this up and come back with one answer."
+          )),
         author,
       });
     };
@@ -115,10 +307,14 @@ export async function handleInboundChatMessage(input: {
       if (!clipped) return;
       if (!postedProgressHeader) {
         postedProgressHeader = true;
+        const header = await generateNotice(
+          "Send a brief progress-header sentence that you'll post quick updates while working.",
+          "I'll share quick progress notes in this thread as I work."
+        );
         await transport.postProgress({
           conversationId: msg.conversationId,
           threadId: msg.threadId,
-          text: "I’ll share quick progress notes in this thread as I work.",
+          text: header,
           author,
           isHeader: true,
         });
@@ -141,6 +337,11 @@ export async function handleInboundChatMessage(input: {
         sessionId: msg.threadId
           ? `${msg.surface}:${msg.accountId}:${msg.conversationId}:thread:${msg.threadId}`
           : `${msg.surface}:${msg.accountId}:${msg.conversationId}:session`,
+        contextMode: routing.contextMode,
+        singleSourceType: routing.singleSourceType,
+        hasActiveSession: routing.hasActiveSession,
+        sessionScore: routing.sessionScore,
+        contextPolicy: routing.contextPolicy,
       },
       onAck: async () => {
         await postAck({ steps: [] });
@@ -163,10 +364,14 @@ export async function handleInboundChatMessage(input: {
       })
       .catch(async (err) => {
         const msgText = err instanceof Error ? err.message : String(err);
+        const notice = await generateNotice(
+          `You hit an execution error while handling the user's request. Error detail: ${msgText}`,
+          `I hit an error while running that: ${msgText}`
+        );
         await transport.postMessage({
           conversationId: msg.conversationId,
           threadId: msg.threadId,
-          text: `I hit an error while running that: ${msgText}`,
+          text: notice,
           author,
         });
       });

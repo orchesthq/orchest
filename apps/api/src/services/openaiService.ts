@@ -502,6 +502,50 @@ export async function generatePlanAck(input: {
   return "On it - I'll look this up and come back with one answer.";
 }
 
+export async function generateAgentNotice(input: {
+  agentName: string;
+  agentRole: string;
+  systemPrompt: string;
+  profileMemories: string[];
+  context: string;
+  fallback: string;
+}): Promise<string> {
+  const cfg = await getOpenAiConfig();
+  if (!cfg) return input.fallback;
+
+  const profileBlock =
+    input.profileMemories.length === 0
+      ? "No profile memories."
+      : input.profileMemories.slice(0, 10).map((m) => `- ${m}`).join("\n");
+
+  const system = [
+    input.systemPrompt,
+    "",
+    `You are ${input.agentName} (${input.agentRole}) replying in chat.`,
+    "Write one short user-facing sentence in the agent's voice.",
+    "Keep it natural, concise, and specific to the context provided.",
+    "Do not add facts that were not provided.",
+    "No bullets, no markdown, no code fences.",
+  ].join("\n");
+
+  const user = ["Context:", input.context, "", "Profile memories:", profileBlock].join("\n");
+
+  try {
+    const json = await chatCompletionRaw(cfg, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.4,
+    });
+    const content = json?.choices?.[0]?.message?.content;
+    if (typeof content === "string" && content.trim()) return clampAckToSingleSentence(content);
+  } catch {
+    // fall through
+  }
+  return input.fallback;
+}
+
 function clampAckToSingleSentence(raw: string): string {
   const fallback = "On it - I'll look this up and come back with one answer.";
   const text = String(raw ?? "").replace(/\s+/g, " ").trim();
