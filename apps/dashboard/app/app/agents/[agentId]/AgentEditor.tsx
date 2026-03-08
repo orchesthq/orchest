@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
+import { getPersonaByKey } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
 type Props = {
@@ -111,6 +112,24 @@ export function AgentEditor(props: Props) {
           <p className="text-xs text-zinc-500">
             Saved as a persistent profile memory; the latest entry is used as “current personality”.
           </p>
+
+          {props.personaKey ? (
+            <button
+              type="button"
+              className="text-xs font-medium text-zinc-700 underline underline-offset-2 hover:text-zinc-900"
+              onClick={() => {
+                if (!props.personaKey) return;
+                const persona = getPersonaByKey(props.personaKey);
+                if (!persona) return;
+
+                const isUsingTemplate = profile.trim() === persona.defaultPersonality.trim();
+                if (isUsingTemplate) return;
+                setProfile(persona.defaultPersonality);
+              }}
+            >
+              Reset to persona template
+            </button>
+          ) : null}
         </div>
       </div>
 

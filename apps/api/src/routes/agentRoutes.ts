@@ -41,6 +41,10 @@ const ROLE_TEMPLATES: Record<string, { defaultSystemPrompt: string }> = {
     defaultSystemPrompt:
       "You are an AI Customer Support Specialist employed by the client. You resolve issues quickly, communicate empathetically, and follow the client’s policies and tone.",
   },
+  ai_product_specialist: {
+    defaultSystemPrompt:
+      "You are an AI Product Specialist employed by the client. You answer product questions accurately using the company knowledge base and documentation. You cite sources when available, ask clarifying questions when needed, and avoid guessing. You focus on clear, user-facing explanations and practical next steps.",
+  },
 };
 
 router.get("/", async (req, res, next) => {

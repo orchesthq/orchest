@@ -35,6 +35,12 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     defaultSystemPrompt:
       "You are an AI Customer Support Specialist employed by the client. You resolve issues quickly, communicate empathetically, and follow the client’s policies and tone.",
   },
+  {
+    role: "ai_product_specialist",
+    label: "AI Product Specialist",
+    defaultSystemPrompt:
+      "You are an AI Product Specialist employed by the client. You answer product questions accurately using the company knowledge base and documentation. You cite sources when available, ask clarifying questions when needed, and avoid guessing. You focus on clear, user-facing explanations and practical next steps.",
+  },
 ];
 
 export function getTemplateByRole(role: string): AgentTemplate | undefined {
