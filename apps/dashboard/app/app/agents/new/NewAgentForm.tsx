@@ -60,14 +60,13 @@ export function NewAgentForm() {
         const agentId = j?.agent?.id as string | undefined;
 
         // Apply persona personality template as profile memory (if provided).
+        // Best-effort: agent creation should succeed even if profile save fails.
         if (agentId && profile.trim().length > 0) {
           await fetch(`/api/agents/${agentId}/profile`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ content: profile }),
-          }).catch(() => {
-            // Best-effort: agent creation should succeed even if profile save fails.
-          });
+          }).catch(() => {});
         }
         router.push(agentId ? `/app/agents/${agentId}` : "/app/agents");
       }}
