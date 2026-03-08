@@ -157,8 +157,8 @@ async function resolveSingleSourceContext(input: {
     return {
       ok: false,
       fallbackMessage:
-        "I can't access external documents on this agent yet. Please paste the content to summarize or connect an external-source tool first.",
-      context: "External-source summary requested, but no external source content is available on this agent yet.",
+        "I can't access the external documents yet. Please paste the content to summarize or connect me to the external tool first.",
+      context: "External-source summary requested, but no external tool is available yet to read the content.",
     };
   }
 
