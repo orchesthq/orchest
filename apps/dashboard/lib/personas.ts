@@ -82,12 +82,3 @@ export const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
   sofia: "ai_data_analyst",
   amira: "ai_customer_support",
 };
-
-export const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
-  ava: "ai_software_engineer",
-  ben: "ai_devops_sre",
-  priya: "ai_product_manager",
-  sofia: "ai_data_analyst",
-  amira: "ai_customer_support",
-};
-
