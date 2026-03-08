@@ -99,14 +99,25 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             threadId,
           });
         }
-        const json = await slackApi(input.token, "conversations.replies", {
-          channel: conversationId,
-          ts: threadId,
-          limit: 12,
-          inclusive: true,
-        });
-
-        const messages: any[] = Array.isArray(json?.messages) ? json.messages : [];
+        let messages: any[] = [];
+        try {
+          // `inclusive` can be rejected by Slack in this call shape; keep params minimal.
+          const json = await slackApi(input.token, "conversations.replies", {
+            channel: conversationId,
+            ts: threadId,
+            limit: 12,
+          });
+          messages = Array.isArray(json?.messages) ? json.messages : [];
+        } catch (err) {
+          if (CONTEXT_DEBUG) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log("[slack][context] fetchThreadContext:replies_failed", {
+              conversationId,
+              threadId,
+              error: msg,
+            });
+          }
+        }
         let source = messages;
 
         // If there's no actual thread (just the triggering message), fall back to channel history so the
@@ -154,6 +165,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           console.log("[slack][context] fetchThreadContext:done", {
             conversationId,
             threadId,
+            repliesCount: messages.length,
             sourceMessages: source.length,
             outputLines: lines.length,
           });
