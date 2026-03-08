@@ -95,17 +95,36 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
         let messages: any[] = [];
         let repliesHasMore = false;
         let usedHistoryFallback = false;
+        let repliesFailed = false;
         try {
-          // `inclusive` can be rejected by Slack in this call shape; keep params minimal.
-          const json = await slackApi(input.token, "conversations.replies", {
-            channel: conversationId,
-            ts: threadId,
-            limit: Math.min(100, max),
-          });
-          repliesHasMore = Boolean((json as any)?.has_more);
-          messages = Array.isArray(json?.messages) ? json.messages : [];
+          // Page through replies so we don't accidentally summarize only the first message/page.
+          let cursor: string | undefined;
+          const seenTs = new Set<string>();
+          while (messages.length < max) {
+            const json = await slackApi(input.token, "conversations.replies", {
+              channel: conversationId,
+              ts: threadId,
+              limit: Math.min(100, max - messages.length),
+              cursor,
+            });
+            const page: any[] = Array.isArray(json?.messages) ? json.messages : [];
+            for (const m of page) {
+              const ts = String(m?.ts ?? "");
+              if (!ts || seenTs.has(ts)) continue;
+              seenTs.add(ts);
+              messages.push(m);
+              if (messages.length >= max) break;
+            }
+            const nextCursor = String((json as any)?.response_metadata?.next_cursor ?? "").trim();
+            const hasMore = Boolean((json as any)?.has_more) || Boolean(nextCursor);
+            if (!hasMore) break;
+            repliesHasMore = true;
+            if (!nextCursor) break;
+            cursor = nextCursor;
+          }
         } catch {
           // replies can fail on some surfaces/contexts; history fallback below may still work.
+          repliesFailed = true;
         }
         let source = messages;
 
@@ -158,6 +177,17 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             (m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId
           ).length;
           if (threadScopedCount === 0) return "";
+          // If we only have the root message but root says there are replies, treat as unresolved.
+          const root = source.find((m) => String(m?.ts ?? "") === threadId);
+          const expectedReplies = Math.max(0, Number((root as any)?.reply_count ?? 0));
+          const observedReplies = source.filter((m) => String(m?.thread_ts ?? "") === threadId).length;
+          const expectedInWindow = Math.min(expectedReplies, max);
+          if (expectedInWindow > 0 && observedReplies < expectedInWindow) {
+            return "";
+          }
+          if (repliesFailed && observedReplies === 0 && expectedReplies > 0) {
+            return "";
+          }
         }
         if (lines.length === 0) return "";
 
