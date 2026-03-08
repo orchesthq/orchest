@@ -163,6 +163,7 @@ router.patch("/:agentId", requireInternalServiceAuth, async (req, res, next) => 
     const body = z
       .object({
         name: z.string().min(1).optional(),
+        personaKey: z.string().min(1).nullable().optional(),
         role: z.string().min(1).optional(),
         systemPrompt: z.string().min(1).optional(),
       })
@@ -173,15 +174,29 @@ router.patch("/:agentId", requireInternalServiceAuth, async (req, res, next) => 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+
+    if (body.personaKey !== undefined) {
+      if (body.personaKey && !isPersonaKey(body.personaKey)) {
+        res.status(400).json({ error: "Invalid personaKey" });
+        return;
+      }
+    }
     if ((existing as any).persona_key && body.name && body.name !== existing.name) {
       res.status(400).json({ error: "Persona agent names are fixed and cannot be changed." });
       return;
     }
 
+    // If switching to a persona-backed agent, enforce the persona name.
+    // If switching away from a persona, allow custom naming.
+    const nextPersonaKey = body.personaKey !== undefined ? body.personaKey : (existing as any).persona_key;
+    const persona = nextPersonaKey ? getPersonaByKey(nextPersonaKey) : undefined;
+    const nextName = persona ? persona.name : body.name;
+
     const agent = await updateAgentScoped({
       clientId,
       agentId,
-      name: body.name,
+      name: nextName,
+      personaKey: body.personaKey,
       role: body.role,
       systemPrompt: body.systemPrompt,
     });
