@@ -89,7 +89,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
       });
     },
 
-    fetchThreadContext: async ({ conversationId, threadId }) => {
+    fetchThreadContext: async ({ conversationId, threadId, strictThreadOnly }) => {
       try {
         let messages: any[] = [];
         try {
@@ -111,12 +111,20 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           try {
             const hist = await slackApi(input.token, "conversations.history", {
               channel: conversationId,
-              latest: threadId,
+              oldest: threadId,
               inclusive: true,
-              limit: 12,
+              limit: 200,
             });
             const hm: any[] = Array.isArray(hist?.messages) ? hist.messages : [];
-            if (hm.length > 1) source = hm.reverse(); // oldest → newest
+            const threadOnly = hm
+              .filter((m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId)
+              .sort((a, b) => Number(String(a?.ts ?? "0")) - Number(String(b?.ts ?? "0")));
+            if (threadOnly.length > 0) {
+              source = threadOnly;
+            } else if (!strictThreadOnly && hm.length > 1) {
+              // Non-strict mode keeps prior behavior for continuity when no thread grouping exists.
+              source = hm.reverse(); // oldest → newest
+            }
           } catch {
             // ignore
           }
@@ -131,6 +139,12 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             return `${who}: ${t}`;
           });
 
+        if (strictThreadOnly) {
+          const threadScopedCount = source.filter(
+            (m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId
+          ).length;
+          if (threadScopedCount === 0) return "";
+        }
         if (lines.length === 0) return "";
         return ["", "Thread context (most recent):", ...lines].join("\n");
       } catch {

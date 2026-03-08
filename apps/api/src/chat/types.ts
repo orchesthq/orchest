@@ -66,6 +66,8 @@ export type ChatTransport = {
     conversationId: string;
     threadId: string;
     maxMessages?: number;
+    /** If true, only return messages that belong to the specified thread. */
+    strictThreadOnly?: boolean;
   }) => Promise<string>;
 };
 

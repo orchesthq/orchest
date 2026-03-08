@@ -130,6 +130,7 @@ async function resolveSingleSourceContext(input: {
         conversationId: input.msg.conversationId,
         threadId: input.msg.threadId,
         maxMessages: 25,
+        strictThreadOnly: true,
       })
       .catch(() => "");
     const cleaned = String(threadText ?? "").trim();
