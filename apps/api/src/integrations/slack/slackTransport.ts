@@ -1,8 +1,6 @@
 import type { ChatTransport } from "../../chat/types";
 import { slackApi } from "./slackApiClient";
 
-const CONTEXT_DEBUG = true;
-
 function normalizeSlackText(text: string): string {
   return String(text ?? "")
     .replace(/<@[A-Z0-9]+>/g, "") // strip mention tokens
@@ -93,12 +91,6 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
 
     fetchThreadContext: async ({ conversationId, threadId }) => {
       try {
-        if (CONTEXT_DEBUG) {
-          console.log("[slack][context] fetchThreadContext:start", {
-            conversationId,
-            threadId,
-          });
-        }
         let messages: any[] = [];
         try {
           // `inclusive` can be rejected by Slack in this call shape; keep params minimal.
@@ -108,15 +100,8 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             limit: 12,
           });
           messages = Array.isArray(json?.messages) ? json.messages : [];
-        } catch (err) {
-          if (CONTEXT_DEBUG) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.log("[slack][context] fetchThreadContext:replies_failed", {
-              conversationId,
-              threadId,
-              error: msg,
-            });
-          }
+        } catch {
+          // replies can fail on some surfaces/contexts; history fallback below may still work.
         }
         let source = messages;
 
@@ -132,22 +117,8 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             });
             const hm: any[] = Array.isArray(hist?.messages) ? hist.messages : [];
             if (hm.length > 1) source = hm.reverse(); // oldest → newest
-            if (CONTEXT_DEBUG) {
-              console.log("[slack][context] fetchThreadContext:history_fallback", {
-                conversationId,
-                threadId,
-                repliesCount: messages.length,
-                historyCount: hm.length,
-              });
-            }
           } catch {
             // ignore
-            if (CONTEXT_DEBUG) {
-              console.log("[slack][context] fetchThreadContext:history_fallback_failed", {
-                conversationId,
-                threadId,
-              });
-            }
           }
         }
 
@@ -161,25 +132,8 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           });
 
         if (lines.length === 0) return "";
-        if (CONTEXT_DEBUG) {
-          console.log("[slack][context] fetchThreadContext:done", {
-            conversationId,
-            threadId,
-            repliesCount: messages.length,
-            sourceMessages: source.length,
-            outputLines: lines.length,
-          });
-        }
         return ["", "Thread context (most recent):", ...lines].join("\n");
-      } catch (err) {
-        if (CONTEXT_DEBUG) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.log("[slack][context] fetchThreadContext:error", {
-            conversationId,
-            threadId,
-            error: msg,
-          });
-        }
+      } catch {
         return "";
       }
     },

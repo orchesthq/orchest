@@ -5,7 +5,7 @@ import type { ToolAccessSummary } from "./tools/toolInventory";
 import { getCapability } from "./capabilities/capabilityRegistry";
 import { getEnabledToolGuides } from "./tools/toolGuides";
 import { formatToolAccessSummary } from "./tools/toolInventory";
-import type { ToolArtifactRecord } from "./memoryService";
+import type { ContextMode, SingleSourceType, ToolArtifactRecord } from "./memoryService";
 
 type ReActOptions = {
   taskId: string;
@@ -17,6 +17,8 @@ type ReActOptions = {
   registry: ToolRegistry;
   toolAccess?: ToolAccessSummary;
   capabilities?: CapabilityId[];
+  contextMode?: ContextMode;
+  singleSourceType?: SingleSourceType;
   maxIterations?: number;
   maxToolCalls?: number;
   onProgress?: (update: { type: "status"; text: string }) => Promise<void>;
@@ -163,6 +165,15 @@ export async function runReActLoop(input: ReActOptions): Promise<{
     systemParts.push("", "Available tools for this agent:", formatToolAccessSummary(input.toolAccess));
   }
 
+  if (input.contextMode === "single_source") {
+    systemParts.push(
+      "",
+      "Single-source mode is active.",
+      "- Use only the provided source context for factual content.",
+      "- Do not call kb_search or other retrieval tools unless the user explicitly asks for broader lookup."
+    );
+  }
+
   const capabilityIds: CapabilityId[] = Array.isArray(input.capabilities) && input.capabilities.length > 0 ? input.capabilities : [];
   if (capabilityIds.length > 0) {
     systemParts.push("", "Selected capabilities (in priority order):", capabilityIds.map((c) => `- ${c}`).join("\n"));
@@ -213,6 +224,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{
       // Hard grounding gate: if KB is available and capability requires company grounding,
       // ensure we executed kb_search at least once before finalizing.
       const needsKbGrounding =
+        input.contextMode !== "single_source" &&
         Boolean(input.toolAccess?.kb?.available) &&
         Array.isArray(input.capabilities) &&
         (input.capabilities.includes("inspect_client_knowledge_base" as any) ||

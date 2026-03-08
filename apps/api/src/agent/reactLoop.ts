@@ -84,6 +84,8 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           registry,
           toolAccess,
           capabilities,
+          contextMode: options?.memoryContext?.contextMode,
+          singleSourceType: options?.memoryContext?.singleSourceType,
           onProgress: options?.onProgress,
         });
 
@@ -129,6 +131,8 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       registry,
       toolAccess,
       capabilities,
+      contextMode: options?.memoryContext?.contextMode,
+      singleSourceType: options?.memoryContext?.singleSourceType,
       onProgress: options?.onProgress,
     });
 
