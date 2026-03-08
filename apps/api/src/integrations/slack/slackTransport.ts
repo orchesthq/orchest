@@ -89,15 +89,16 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
       });
     },
 
-    fetchThreadContext: async ({ conversationId, threadId, strictThreadOnly }) => {
+    fetchThreadContext: async ({ conversationId, threadId, maxMessages, strictThreadOnly }) => {
       try {
+        const max = Math.max(5, Math.min(200, Number(maxMessages ?? 20)));
         let messages: any[] = [];
         try {
           // `inclusive` can be rejected by Slack in this call shape; keep params minimal.
           const json = await slackApi(input.token, "conversations.replies", {
             channel: conversationId,
             ts: threadId,
-            limit: 12,
+            limit: Math.min(100, max),
           });
           messages = Array.isArray(json?.messages) ? json.messages : [];
         } catch {
@@ -109,12 +110,21 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
         // agent maintains context in channels where people don't use threads.
         if (messages.length <= 1) {
           try {
-            const hist = await slackApi(input.token, "conversations.history", {
-              channel: conversationId,
-              oldest: threadId,
-              inclusive: true,
-              limit: 200,
-            });
+            const hist = await slackApi(input.token, "conversations.history",
+              strictThreadOnly
+                ? {
+                    channel: conversationId,
+                    oldest: threadId,
+                    inclusive: true,
+                    limit: 200,
+                  }
+                : {
+                    channel: conversationId,
+                    latest: threadId,
+                    inclusive: true,
+                    limit: Math.min(200, max + 20),
+                  }
+            );
             const hm: any[] = Array.isArray(hist?.messages) ? hist.messages : [];
             const threadOnly = hm
               .filter((m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId)
@@ -132,7 +142,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
 
         const lines = source
           .filter((m) => typeof m?.text === "string" && m.text.trim().length > 0)
-          .slice(-10)
+          .slice(-max)
           .map((m) => {
             const who = m.bot_id || m.subtype === "bot_message" ? "assistant" : "user";
             const t = normalizeSlackText(String(m.text));

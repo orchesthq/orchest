@@ -129,8 +129,9 @@ async function resolveSingleSourceContext(input: {
       .fetchThreadContext({
         conversationId: input.msg.conversationId,
         threadId: input.msg.threadId,
-        maxMessages: 25,
-        strictThreadOnly: true,
+        maxMessages: 80,
+        // DM events use per-message thread_ts; strict mode there can hide valid recent conversation context.
+        strictThreadOnly: input.msg.kind !== "dm",
       })
       .catch(() => "");
     const cleaned = String(threadText ?? "").trim();
@@ -259,7 +260,8 @@ export async function handleInboundChatMessage(input: {
         .fetchThreadContext({
           conversationId: msg.conversationId,
           threadId: msg.threadId,
-          maxMessages: 10,
+          maxMessages: 30,
+          strictThreadOnly: false,
         })
         .catch(() => "");
     }
