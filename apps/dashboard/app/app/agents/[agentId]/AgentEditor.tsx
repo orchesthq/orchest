@@ -150,6 +150,20 @@ export function AgentEditor(props: Props) {
         </div>
       </div>
 
+      {props.personaKey ? (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-zinc-900">Persona</label>
+          <select
+            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+            value={props.personaKey}
+            disabled
+          >
+            <option value={props.personaKey}>{persona?.name ?? props.personaKey}</option>
+          </select>
+          <p className="text-xs text-zinc-500">Persona is fixed for built-in personas.</p>
+        </div>
+      ) : null}
+
       <div className="space-y-2">
         <label className="text-sm font-medium text-zinc-900">
           Role
