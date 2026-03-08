@@ -7,12 +7,26 @@ import { getTemplateByRole } from "@/lib/agentTemplates";
 import Image from "next/image";
 import { AgentCardActions } from "./AgentCardActions";
 
+async function getLatestProfileMemory(clientId: string, agentId: string) {
+  try {
+    const res = await apiFetchForClient<{ memories: { content: string }[] }>(
+      clientId,
+      `/agents/${agentId}/profile`,
+      { method: "GET" }
+    );
+    return res.memories?.[0]?.content ?? null;
+  } catch {
+    return null;
+  }
+}
+
 type Agent = {
   id: string;
   persona_key?: string | null;
   name: string;
   role: string;
   created_at: string;
+  system_prompt?: string | null;
 };
 
 type SlackStatus = {
@@ -78,6 +92,13 @@ export default async function AgentsPage() {
     if (k && !agentByPersona.has(k)) agentByPersona.set(k, a);
   }
 
+  const profileByAgentId = new Map<string, string | null>();
+  await Promise.all(
+    agents.map(async (a) => {
+      profileByAgentId.set(a.id, await getLatestProfileMemory(clientId, a.id));
+    })
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -92,6 +113,20 @@ export default async function AgentsPage() {
           const agent = agentByPersona.get(p.key) ?? null;
           const bot = slackStatus?.bots?.[p.key];
           const slackConnected = Boolean(bot && (bot as { connected?: boolean }).connected);
+
+          const roleLabel = agent ? getTemplateByRole(agent.role)?.label ?? agent.role : null;
+          const roleIsCustom = agent
+            ? (getTemplateByRole(agent.role)?.defaultSystemPrompt ?? "").trim().length > 0 &&
+              Boolean(agent.system_prompt) &&
+              String(agent.system_prompt).trim() !==
+                String(getTemplateByRole(agent.role)?.defaultSystemPrompt ?? "").trim()
+            : false;
+
+          const latestProfile = agent ? profileByAgentId.get(agent.id) ?? null : null;
+          const personaDefault = p.defaultPersonality ?? "";
+          const personaIsCustom = agent
+            ? Boolean(latestProfile && latestProfile.trim() !== personaDefault.trim())
+            : false;
 
           return (
             <div
@@ -140,7 +175,22 @@ export default async function AgentsPage() {
                   <div className="flex items-center justify-between">
                     <div className="text-zinc-700">Role</div>
                     <div className="text-zinc-600">
-                      {getTemplateByRole(agent.role)?.label ?? agent.role}
+                      {roleLabel}
+                      {roleIsCustom ? (
+                        <span className="ml-2 text-xs text-zinc-500">(custom)</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {agent ? (
+                  <div className="flex items-center justify-between">
+                    <div className="text-zinc-700">Persona</div>
+                    <div className="text-zinc-600">
+                      {p.description}
+                      {personaIsCustom ? (
+                        <span className="ml-2 text-xs text-zinc-500">(custom)</span>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}

@@ -124,9 +124,32 @@ export function AgentEditor(props: Props) {
         </div>
 
         <div className="space-y-2">
+          <label className="text-sm font-medium text-zinc-900">Persona</label>
+          <select
+            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+            value={personaKey ?? ""}
+            onChange={(e) => {
+              const nextKey = e.target.value;
+              setPersonaKey(nextKey);
+
+              // Always re-apply the selected persona template.
+              const nextPersona = getPersonaByKey(nextKey);
+              if (nextPersona) setProfile(nextPersona.defaultPersonality);
+            }}
+          >
+            {ORCHEST_PERSONAS.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.description}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-zinc-500">
+            Changing persona will overwrite the personality text with the selected persona template.
+          </p>
+
           <label className="text-sm font-medium text-zinc-900">
             Personality (profile memory)
-            {props.personaKey && personaIsCustom ? (
+            {personaIsCustom ? (
               <span className="ml-2 text-xs font-normal text-zinc-500">(custom)</span>
             ) : null}
           </label>
@@ -140,7 +163,7 @@ export function AgentEditor(props: Props) {
             Saved as a persistent profile memory; the latest entry is used as “current personality”.
           </p>
 
-          {props.personaKey && persona ? (
+          {persona ? (
             <button
               type="button"
               disabled={!personaIsCustom}
@@ -154,34 +177,6 @@ export function AgentEditor(props: Props) {
             </button>
           ) : null}
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-zinc-900">
-          Persona
-          {personaIsCustom ? <span className="ml-2 text-xs font-normal text-zinc-500">(custom)</span> : null}
-        </label>
-        <select
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-          value={personaKey ?? ""}
-          onChange={(e) => {
-            const nextKey = e.target.value;
-            setPersonaKey(nextKey);
-
-            // Always re-apply the selected persona template.
-            const nextPersona = getPersonaByKey(nextKey);
-            if (nextPersona) setProfile(nextPersona.defaultPersonality);
-          }}
-        >
-          {ORCHEST_PERSONAS.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-zinc-500">
-          Changing persona will overwrite the personality text with the selected persona template.
-        </p>
       </div>
 
       <div className="space-y-2">
