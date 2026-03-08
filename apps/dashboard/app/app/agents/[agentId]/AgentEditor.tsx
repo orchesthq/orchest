@@ -25,6 +25,14 @@ export function AgentEditor(props: Props) {
 
   const [personaKey, setPersonaKey] = useState<string | null>(props.personaKey);
 
+  // Local baselines so the editor doesn't "snap back" to the original props after saving.
+  // (The page doesn't automatically refetch server props after a PATCH.)
+  const [baselinePersonaKey, setBaselinePersonaKey] = useState<string | null>(props.personaKey);
+  const [baselineName, setBaselineName] = useState(props.initialName);
+  const [baselineRole, setBaselineRole] = useState(props.initialRole);
+  const [baselineSystemPrompt, setBaselineSystemPrompt] = useState(props.initialSystemPrompt);
+  const [baselineProfile, setBaselineProfile] = useState(props.initialProfileMemory);
+
   const persona = useMemo(() => {
     if (!personaKey) return undefined;
     return getPersonaByKey(personaKey);
@@ -43,11 +51,11 @@ export function AgentEditor(props: Props) {
 
   const dirty = useMemo(() => {
     return (
-      personaKey !== props.personaKey ||
-      (props.personaKey ? false : name !== props.initialName) ||
-      role !== props.initialRole ||
-      systemPrompt !== props.initialSystemPrompt ||
-      profile !== props.initialProfileMemory
+      personaKey !== baselinePersonaKey ||
+      (baselinePersonaKey ? false : name !== baselineName) ||
+      role !== baselineRole ||
+      systemPrompt !== baselineSystemPrompt ||
+      profile !== baselineProfile
     );
   }, [
     name,
@@ -55,11 +63,11 @@ export function AgentEditor(props: Props) {
     systemPrompt,
     profile,
     personaKey,
-    props.personaKey,
-    props.initialName,
-    props.initialRole,
-    props.initialSystemPrompt,
-    props.initialProfileMemory,
+    baselinePersonaKey,
+    baselineName,
+    baselineRole,
+    baselineSystemPrompt,
+    baselineProfile,
   ]);
 
   return (
@@ -73,25 +81,25 @@ export function AgentEditor(props: Props) {
 
         try {
           if (
-            personaKey !== props.personaKey ||
-            (!props.personaKey && name !== props.initialName) ||
-            role !== props.initialRole ||
-            systemPrompt !== props.initialSystemPrompt
+            personaKey !== baselinePersonaKey ||
+            (!baselinePersonaKey && name !== baselineName) ||
+            role !== baselineRole ||
+            systemPrompt !== baselineSystemPrompt
           ) {
             const res = await fetch(`/api/agents/${props.agentId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                name: !props.personaKey && name !== props.initialName ? name : undefined,
-                personaKey: personaKey !== props.personaKey ? personaKey : undefined,
-                role: role !== props.initialRole ? role : undefined,
-                systemPrompt: systemPrompt !== props.initialSystemPrompt ? systemPrompt : undefined,
+                name: !baselinePersonaKey && name !== baselineName ? name : undefined,
+                personaKey: personaKey !== baselinePersonaKey ? personaKey : undefined,
+                role: role !== baselineRole ? role : undefined,
+                systemPrompt: systemPrompt !== baselineSystemPrompt ? systemPrompt : undefined,
               }),
             });
             if (!res.ok) throw new Error("Failed to update agent");
           }
 
-          if (profile.trim().length > 0 && profile !== props.initialProfileMemory) {
+          if (profile.trim().length > 0 && profile !== baselineProfile) {
             const res = await fetch(`/api/agents/${props.agentId}/profile`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -99,6 +107,13 @@ export function AgentEditor(props: Props) {
             });
             if (!res.ok) throw new Error("Failed to save personality");
           }
+
+          // Update baselines so the UI reflects what was just saved.
+          setBaselinePersonaKey(personaKey);
+          setBaselineName(name);
+          setBaselineRole(role);
+          setBaselineSystemPrompt(systemPrompt);
+          setBaselineProfile(profile);
 
           setSavedAt(new Date().toLocaleString());
         } catch (err: any) {
