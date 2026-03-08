@@ -178,14 +178,12 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           ).length;
           if (threadScopedCount === 0) return "";
           // If we only have the root message but root says there are replies, treat as unresolved.
+          // Do not require an exact reply_count match: Slack counts can include deleted/hidden/system items.
           const root = source.find((m) => String(m?.ts ?? "") === threadId);
           const expectedReplies = Math.max(0, Number((root as any)?.reply_count ?? 0));
           const observedReplies = source.filter((m) => String(m?.thread_ts ?? "") === threadId).length;
-          const expectedInWindow = Math.min(expectedReplies, max);
-          if (expectedInWindow > 0 && observedReplies < expectedInWindow) {
-            return "";
-          }
-          if (repliesFailed && observedReplies === 0 && expectedReplies > 0) {
+          const appearsRootOnly = source.length <= 1 || observedReplies === 0;
+          if ((repliesFailed || usedHistoryFallback) && appearsRootOnly && expectedReplies > 0) {
             return "";
           }
         }
