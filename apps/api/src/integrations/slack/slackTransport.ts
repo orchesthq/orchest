@@ -1,5 +1,5 @@
 import type { ChatTransport } from "../../chat/types";
-import { slackApi } from "./slackApiClient";
+import { slackApi, slackApiGet } from "./slackApiClient";
 
 const SLACK_THREAD_DEBUG = true;
 function slackThreadLog(...args: any[]) {
@@ -110,7 +110,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           let pageNo = 0;
           while (messages.length < max) {
             pageNo += 1;
-            const json = await slackApi(input.token, "conversations.replies", {
+            const json = await slackApiGet(input.token, "conversations.replies", {
               channel: conversationId,
               ts: threadId,
               limit: Math.min(100, max - messages.length),
@@ -152,7 +152,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
         // agent maintains context in channels where people don't use threads.
         if (messages.length <= 1) {
           try {
-            const hist = await slackApi(input.token, "conversations.history",
+            const hist = await slackApiGet(input.token, "conversations.history",
               strictThreadOnly
                 ? {
                     channel: conversationId,
