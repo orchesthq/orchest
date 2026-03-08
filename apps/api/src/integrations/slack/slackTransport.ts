@@ -93,6 +93,8 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
       try {
         const max = Math.max(5, Math.min(200, Number(maxMessages ?? 20)));
         let messages: any[] = [];
+        let repliesHasMore = false;
+        let usedHistoryFallback = false;
         try {
           // `inclusive` can be rejected by Slack in this call shape; keep params minimal.
           const json = await slackApi(input.token, "conversations.replies", {
@@ -100,6 +102,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             ts: threadId,
             limit: Math.min(100, max),
           });
+          repliesHasMore = Boolean((json as any)?.has_more);
           messages = Array.isArray(json?.messages) ? json.messages : [];
         } catch {
           // replies can fail on some surfaces/contexts; history fallback below may still work.
@@ -125,6 +128,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
                     limit: Math.min(200, max + 20),
                   }
             );
+            usedHistoryFallback = true;
             const hm: any[] = Array.isArray(hist?.messages) ? hist.messages : [];
             const threadOnly = hm
               .filter((m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId)
@@ -140,9 +144,9 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           }
         }
 
-        const lines = source
-          .filter((m) => typeof m?.text === "string" && m.text.trim().length > 0)
-          .slice(-max)
+        const allTextMessages = source.filter((m) => typeof m?.text === "string" && m.text.trim().length > 0);
+        const textMessages = allTextMessages.slice(-max);
+        const lines = textMessages
           .map((m) => {
             const who = m.bot_id || m.subtype === "bot_message" ? "assistant" : "user";
             const t = normalizeSlackText(String(m.text));
@@ -156,7 +160,16 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           if (threadScopedCount === 0) return "";
         }
         if (lines.length === 0) return "";
-        return ["", "Thread context (most recent):", ...lines].join("\n");
+
+        const maybeTruncated =
+          repliesHasMore ||
+          allTextMessages.length > max ||
+          (usedHistoryFallback && strictThreadOnly && source.length >= 200);
+        const metadataLine = maybeTruncated
+          ? `Thread source note: this appears to be a long thread; only the latest ${lines.length} messages were included.`
+          : `Thread source note: included ${lines.length} messages from this thread.`;
+
+        return ["", "Thread context (most recent):", metadataLine, ...lines].join("\n");
       } catch {
         return "";
       }

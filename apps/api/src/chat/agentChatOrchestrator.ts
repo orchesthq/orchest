@@ -284,6 +284,7 @@ export async function handleInboundChatMessage(input: {
                 "- Use only the specified source context for factual content.",
                 "- Do not use episodic/semantic memory or KB to add extra facts.",
                 "- If required source content is missing, say so explicitly instead of guessing.",
+                "- If the source note says only the latest messages were included, explicitly mention that limit in your summary.",
               ]
             : ["- Use session memory strongly only when hasActiveSession is yes."]),
         ].join("\n"),
