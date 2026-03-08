@@ -7,13 +7,8 @@ import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
 import { ORCHEST_PERSONAS, getPersonaByKey } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
-const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
-  ava: "ai_software_engineer",
-  ben: "ai_devops_sre",
-  priya: "ai_product_manager",
-  sofia: "ai_data_analyst",
-  amira: "ai_customer_support",
-};
+// Use the shared mapping from lib/personas to avoid drift.
+import { DEFAULT_ROLE_BY_PERSONA } from "@/lib/personas";
 
 export function NewAgentForm() {
   const router = useRouter();
