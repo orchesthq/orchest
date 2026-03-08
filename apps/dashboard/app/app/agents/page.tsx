@@ -146,7 +146,16 @@ export default async function AgentsPage() {
                   </div>
                   <div>
                     <div className="text-base font-semibold text-zinc-900">{p.name}</div>
-                    <div className="mt-1 text-sm text-zinc-600">{p.description}</div>
+                    {agent ? (
+                      <div className="mt-1 text-sm text-zinc-600">
+                        {roleLabel}
+                        {roleIsCustom ? (
+                          <span className="ml-2 text-xs text-zinc-500">(custom)</span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-sm text-zinc-600">{p.description}</div>
+                    )}
                   </div>
                 </div>
                 <div className="text-xs text-zinc-500">{p.key}</div>
@@ -170,30 +179,6 @@ export default async function AgentsPage() {
                     <div className="text-zinc-500">Not installed</div>
                   )}
                 </div>
-
-                {agent ? (
-                  <div className="flex items-center justify-between">
-                    <div className="text-zinc-700">Role</div>
-                    <div className="text-zinc-600">
-                      {roleLabel}
-                      {roleIsCustom ? (
-                        <span className="ml-2 text-xs text-zinc-500">(custom)</span>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-
-                {agent ? (
-                  <div className="flex items-center justify-between">
-                    <div className="text-zinc-700">Persona</div>
-                    <div className="text-zinc-600">
-                      {p.description}
-                      {personaIsCustom ? (
-                        <span className="ml-2 text-xs text-zinc-500">(custom)</span>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
               </div>
 
               <AgentCardActions
