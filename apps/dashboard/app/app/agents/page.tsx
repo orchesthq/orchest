@@ -26,6 +26,7 @@ type Agent = {
   name: string;
   role: string;
   created_at: string;
+  system_prompt?: string | null;
 };
 
 type SlackStatus = {
@@ -116,8 +117,8 @@ export default async function AgentsPage() {
           const roleLabel = agent ? getTemplateByRole(agent.role)?.label ?? agent.role : null;
           const roleIsCustom = agent
             ? (getTemplateByRole(agent.role)?.defaultSystemPrompt ?? "").trim().length > 0 &&
-              (agent as any).system_prompt &&
-              String((agent as any).system_prompt).trim() !==
+              Boolean(agent.system_prompt) &&
+              String(agent.system_prompt).trim() !==
                 String(getTemplateByRole(agent.role)?.defaultSystemPrompt ?? "").trim()
             : false;
 
