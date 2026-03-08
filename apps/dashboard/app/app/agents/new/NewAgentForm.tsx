@@ -74,24 +74,15 @@ export function NewAgentForm() {
             setPersonaKey(nextPersona);
 
             const nextRole = DEFAULT_ROLE_BY_PERSONA[nextPersona] ?? "ai_software_engineer";
-            const currentTemplate = getTemplateByRole(role);
-            const isUsingTemplatePrompt =
-              currentTemplate && systemPrompt.trim() === currentTemplate.defaultSystemPrompt.trim();
-
             setRole(nextRole);
-            if (isUsingTemplatePrompt) {
-              const nextTemplate = getTemplateByRole(nextRole);
-              if (nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
-            }
 
-            // Keep personality in sync with persona template unless the user customized it.
-            const currentPersona = getPersonaByKey(personaKey);
+            // Always re-apply the selected role template.
+            const nextTemplate = getTemplateByRole(nextRole);
+            if (nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
+
+            // Always re-apply the selected persona template.
             const nextPersonaObj = getPersonaByKey(nextPersona);
-            const isUsingTemplatePersonality =
-              currentPersona && profile.trim() === currentPersona.defaultPersonality.trim();
-            if (isUsingTemplatePersonality && nextPersonaObj) {
-              setProfile(nextPersonaObj.defaultPersonality);
-            }
+            if (nextPersonaObj) setProfile(nextPersonaObj.defaultPersonality);
           }}
         >
           {ORCHEST_PERSONAS.map((p) => (
@@ -125,12 +116,9 @@ export function NewAgentForm() {
             const nextRole = e.target.value;
             setRole(nextRole);
 
-            // If the user hasn't customized the system prompt, keep it in sync with the selected template.
-            const currentTemplate = getTemplateByRole(role);
+            // Always re-apply the selected role template.
             const nextTemplate = getTemplateByRole(nextRole);
-            const isUsingTemplatePrompt =
-              currentTemplate && systemPrompt.trim() === currentTemplate.defaultSystemPrompt.trim();
-            if (isUsingTemplatePrompt && nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
+            if (nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
           }}
         >
           {AGENT_TEMPLATES.map((t) => (

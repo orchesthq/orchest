@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
-import { getPersonaByKey } from "@/lib/personas";
+import { ORCHEST_PERSONAS, getPersonaByKey } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
 type Props = {
@@ -23,8 +23,27 @@ export function AgentEditor(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
+  const [personaKey, setPersonaKey] = useState<string | null>(props.personaKey);
+
+  const persona = useMemo(() => {
+    if (!personaKey) return undefined;
+    return getPersonaByKey(personaKey);
+  }, [personaKey]);
+
+  const personaIsCustom = useMemo(() => {
+    if (!persona) return false;
+    return profile.trim() !== persona.defaultPersonality.trim();
+  }, [persona, profile]);
+
+  const roleTemplate = useMemo(() => getTemplateByRole(role), [role]);
+  const roleIsCustom = useMemo(() => {
+    if (!roleTemplate) return false;
+    return systemPrompt.trim() !== roleTemplate.defaultSystemPrompt.trim();
+  }, [roleTemplate, systemPrompt]);
+
   const dirty = useMemo(() => {
     return (
+      personaKey !== props.personaKey ||
       (props.personaKey ? false : name !== props.initialName) ||
       role !== props.initialRole ||
       systemPrompt !== props.initialSystemPrompt ||
@@ -35,6 +54,7 @@ export function AgentEditor(props: Props) {
     role,
     systemPrompt,
     profile,
+    personaKey,
     props.personaKey,
     props.initialName,
     props.initialRole,
@@ -53,6 +73,7 @@ export function AgentEditor(props: Props) {
 
         try {
           if (
+            personaKey !== props.personaKey ||
             (!props.personaKey && name !== props.initialName) ||
             role !== props.initialRole ||
             systemPrompt !== props.initialSystemPrompt
@@ -62,6 +83,7 @@ export function AgentEditor(props: Props) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 name: !props.personaKey && name !== props.initialName ? name : undefined,
+                personaKey: personaKey !== props.personaKey ? personaKey : undefined,
                 role: role !== props.initialRole ? role : undefined,
                 systemPrompt: systemPrompt !== props.initialSystemPrompt ? systemPrompt : undefined,
               }),
@@ -102,7 +124,12 @@ export function AgentEditor(props: Props) {
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium text-zinc-900">Personality (profile memory)</label>
+          <label className="text-sm font-medium text-zinc-900">
+            Personality (profile memory)
+            {props.personaKey && personaIsCustom ? (
+              <span className="ml-2 text-xs font-normal text-zinc-500">(custom)</span>
+            ) : null}
+          </label>
           <textarea
             className="min-h-[120px] w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
             value={profile}
@@ -113,17 +140,13 @@ export function AgentEditor(props: Props) {
             Saved as a persistent profile memory; the latest entry is used as “current personality”.
           </p>
 
-          {props.personaKey ? (
+          {props.personaKey && persona ? (
             <button
               type="button"
-              className="text-xs font-medium text-zinc-700 underline underline-offset-2 hover:text-zinc-900"
+              disabled={!personaIsCustom}
+              className="text-xs font-medium text-zinc-700 underline underline-offset-2 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => {
-                if (!props.personaKey) return;
-                const persona = getPersonaByKey(props.personaKey);
-                if (!persona) return;
-
-                const isUsingTemplate = profile.trim() === persona.defaultPersonality.trim();
-                if (isUsingTemplate) return;
+                if (!personaIsCustom) return;
                 setProfile(persona.defaultPersonality);
               }}
             >
@@ -134,7 +157,38 @@ export function AgentEditor(props: Props) {
       </div>
 
       <div className="space-y-2">
-        <label className="text-sm font-medium text-zinc-900">Role</label>
+        <label className="text-sm font-medium text-zinc-900">
+          Persona
+          {personaIsCustom ? <span className="ml-2 text-xs font-normal text-zinc-500">(custom)</span> : null}
+        </label>
+        <select
+          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          value={personaKey ?? ""}
+          onChange={(e) => {
+            const nextKey = e.target.value;
+            setPersonaKey(nextKey);
+
+            // Always re-apply the selected persona template.
+            const nextPersona = getPersonaByKey(nextKey);
+            if (nextPersona) setProfile(nextPersona.defaultPersonality);
+          }}
+        >
+          {ORCHEST_PERSONAS.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-zinc-500">
+          Changing persona will overwrite the personality text with the selected persona template.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-zinc-900">
+          Role
+          {roleIsCustom ? <span className="ml-2 text-xs font-normal text-zinc-500">(custom)</span> : null}
+        </label>
         <select
           className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
           value={role}
@@ -142,11 +196,9 @@ export function AgentEditor(props: Props) {
             const nextRole = e.target.value;
             setRole(nextRole);
 
-            const currentTemplate = getTemplateByRole(role);
+            // Always re-apply the selected role template.
             const nextTemplate = getTemplateByRole(nextRole);
-            const isUsingTemplatePrompt =
-              currentTemplate && systemPrompt.trim() === currentTemplate.defaultSystemPrompt.trim();
-            if (isUsingTemplatePrompt && nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
+            if (nextTemplate) setSystemPrompt(nextTemplate.defaultSystemPrompt);
           }}
         >
           {AGENT_TEMPLATES.map((t) => (
@@ -168,6 +220,20 @@ export function AgentEditor(props: Props) {
         <p className="text-xs text-zinc-500">
           This defines the agent’s core behavior. Keep it stable; use personality for style.
         </p>
+
+        {roleTemplate ? (
+          <button
+            type="button"
+            disabled={!roleIsCustom}
+            className="text-xs font-medium text-zinc-700 underline underline-offset-2 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => {
+              if (!roleIsCustom) return;
+              setSystemPrompt(roleTemplate.defaultSystemPrompt);
+            }}
+          >
+            Reset to role template
+          </button>
+        ) : null}
       </div>
 
       {error && (

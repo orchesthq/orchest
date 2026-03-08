@@ -576,6 +576,7 @@ export async function createAgent(input: {
 export async function updateAgentScoped(input: {
   clientId: string;
   agentId: string;
+  personaKey?: string | null;
   name?: string;
   role?: string;
   systemPrompt?: string;
@@ -587,13 +588,21 @@ export async function updateAgentScoped(input: {
     [
       "update agents",
       "set",
-      "  name = coalesce($3, name),",
-      "  role = coalesce($4, role),",
-      "  system_prompt = coalesce($5, system_prompt)",
+      "  persona_key = coalesce($3, persona_key),",
+      "  name = coalesce($4, name),",
+      "  role = coalesce($5, role),",
+      "  system_prompt = coalesce($6, system_prompt)",
       "where client_id = $1 and id = $2",
       "returning id, client_id, persona_key, name, role, system_prompt, created_at",
     ].join("\n"),
-    [input.clientId, input.agentId, input.name ?? null, input.role ?? null, input.systemPrompt ?? null]
+    [
+      input.clientId,
+      input.agentId,
+      input.personaKey ?? null,
+      input.name ?? null,
+      input.role ?? null,
+      input.systemPrompt ?? null,
+    ]
   );
   return one(rows, "Agent not found for client (cannot update)");
 }
