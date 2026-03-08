@@ -4,11 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
-import { ORCHEST_PERSONAS, getPersonaByKey } from "@/lib/personas";
+import { ORCHEST_PERSONAS, getPersonaByKey, DEFAULT_ROLE_BY_PERSONA } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
-
-// Use the shared mapping from lib/personas to avoid drift.
-import { DEFAULT_ROLE_BY_PERSONA } from "@/lib/personas";
 
 export function NewAgentForm() {
   const router = useRouter();
