@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
-import { PERSONAS, getPersonaByKey } from "@/lib/personas";
+import { ORCHEST_PERSONAS, getPersonaByKey } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
 type Props = {
@@ -173,7 +173,7 @@ export function AgentEditor(props: Props) {
             if (nextPersona) setProfile(nextPersona.defaultPersonality);
           }}
         >
-          {PERSONAS.map((p) => (
+          {ORCHEST_PERSONAS.map((p) => (
             <option key={p.key} value={p.key}>
               {p.name}
             </option>
