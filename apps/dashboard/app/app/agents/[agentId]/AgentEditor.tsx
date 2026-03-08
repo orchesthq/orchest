@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AGENT_TEMPLATES, getTemplateByRole } from "@/lib/agentTemplates";
-import { getPersonaByKey } from "@/lib/personas";
+import { PERSONAS, getPersonaByKey } from "@/lib/personas";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
 type Props = {
@@ -23,10 +23,12 @@ export function AgentEditor(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
+  const [personaKey, setPersonaKey] = useState<string | null>(props.personaKey);
+
   const persona = useMemo(() => {
-    if (!props.personaKey) return undefined;
-    return getPersonaByKey(props.personaKey);
-  }, [props.personaKey]);
+    if (!personaKey) return undefined;
+    return getPersonaByKey(personaKey);
+  }, [personaKey]);
 
   const personaIsCustom = useMemo(() => {
     if (!persona) return false;
@@ -41,6 +43,7 @@ export function AgentEditor(props: Props) {
 
   const dirty = useMemo(() => {
     return (
+      personaKey !== props.personaKey ||
       (props.personaKey ? false : name !== props.initialName) ||
       role !== props.initialRole ||
       systemPrompt !== props.initialSystemPrompt ||
@@ -51,6 +54,7 @@ export function AgentEditor(props: Props) {
     role,
     systemPrompt,
     profile,
+    personaKey,
     props.personaKey,
     props.initialName,
     props.initialRole,
@@ -69,6 +73,7 @@ export function AgentEditor(props: Props) {
 
         try {
           if (
+            personaKey !== props.personaKey ||
             (!props.personaKey && name !== props.initialName) ||
             role !== props.initialRole ||
             systemPrompt !== props.initialSystemPrompt
@@ -78,6 +83,7 @@ export function AgentEditor(props: Props) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 name: !props.personaKey && name !== props.initialName ? name : undefined,
+                personaKey: personaKey !== props.personaKey ? personaKey : undefined,
                 role: role !== props.initialRole ? role : undefined,
                 systemPrompt: systemPrompt !== props.initialSystemPrompt ? systemPrompt : undefined,
               }),
@@ -150,19 +156,33 @@ export function AgentEditor(props: Props) {
         </div>
       </div>
 
-      {props.personaKey ? (
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-zinc-900">Persona</label>
-          <select
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-            value={props.personaKey}
-            disabled
-          >
-            <option value={props.personaKey}>{persona?.name ?? props.personaKey}</option>
-          </select>
-          <p className="text-xs text-zinc-500">Persona is fixed for built-in personas.</p>
-        </div>
-      ) : null}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-zinc-900">
+          Persona
+          {personaIsCustom ? <span className="ml-2 text-xs font-normal text-zinc-500">(custom)</span> : null}
+        </label>
+        <select
+          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          value={personaKey ?? ""}
+          onChange={(e) => {
+            const nextKey = e.target.value;
+            setPersonaKey(nextKey);
+
+            // Always re-apply the selected persona template.
+            const nextPersona = getPersonaByKey(nextKey);
+            if (nextPersona) setProfile(nextPersona.defaultPersonality);
+          }}
+        >
+          {PERSONAS.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-zinc-500">
+          Changing persona will overwrite the personality text with the selected persona template.
+        </p>
+      </div>
 
       <div className="space-y-2">
         <label className="text-sm font-medium text-zinc-900">
