@@ -1,5 +1,25 @@
 # Orchest Roadmap
 
+## Next session priorities
+
+### Dashboard
+
+- Add account onboarding flow.
+- Add user management capabilities.
+- Add usage controls and monitoring:
+  - Track token usage per client and per agent.
+  - Enforce configurable usage limits/budgets.
+
+### Agent
+
+- Add `web_read` tools for external webpage reading/summarization.
+- Add Google Docs integration in phases:
+  - Phase 1: read-only access.
+  - Phase 2: add-to-knowledge-base ingestion first.
+  - Phase 3: writing/updating docs after read + KB flow is stable.
+
+---
+
 ## Company context & knowledge
 
 **Goal:** Give agents knowledge of the company so they can answer questions and act with context.
