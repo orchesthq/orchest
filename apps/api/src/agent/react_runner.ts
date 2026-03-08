@@ -118,6 +118,20 @@ function readIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function isLikelyClarifyingQuestion(finalText: string): boolean {
+  const t = String(finalText ?? "").trim();
+  if (!t) return false;
+  const lc = t.toLowerCase();
+  const questionCount = (t.match(/\?/g) ?? []).length;
+  const hasClarifyCue =
+    /\b(one quick question|quick question|before i continue|before i proceed|can you confirm|please confirm|which of these|which one|what is the source of truth)\b/i.test(
+      t
+    ) || /\b(a\)|b\)|c\)|d\))/.test(lc);
+  // Keep this conservative: only short, question-like outputs should short-circuit.
+  const shortMessage = t.length <= 1200 && t.split(/\n+/).length <= 22;
+  return shortMessage && (hasClarifyCue || questionCount >= 1);
+}
+
 export async function runReActLoop(input: ReActOptions): Promise<{
   final: string;
   executed: ExecutedStep[];
@@ -220,6 +234,12 @@ export async function runReActLoop(input: ReActOptions): Promise<{
 
     if (resp.type === "final") {
       lastDraftFinal = resp.final;
+
+      // If the model asks a clarifying question, stop and wait for the user
+      // instead of running the internal self-critique pass.
+      if (isLikelyClarifyingQuestion(resp.final)) {
+        return { final: resp.final, executed, toolExecutions };
+      }
 
       // Hard grounding gate: if KB is available and capability requires company grounding,
       // ensure we executed kb_search at least once before finalizing.

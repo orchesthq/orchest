@@ -1,9 +1,12 @@
 import { z } from "zod";
 import { ToolRegistry, type ToolContext } from "./registry";
+import { listAgentMemoriesByTypeScoped } from "../../db/schema";
+import { parseEpisodicMemoryContent } from "../memoryService";
 import {
   create_branch,
   create_file_and_commit,
   github_apply_patch,
+  github_branch_exists,
   github_find_in_file,
   github_list_changed_files,
   github_list_tree,
@@ -12,6 +15,34 @@ import {
   github_search_code,
   open_pull_request,
 } from "../../integrations/github/githubTools";
+
+async function findRecentRepoBranchHint(
+  ctx: ToolContext,
+  repo: string
+): Promise<{ branch: string; repo: string } | null> {
+  const repoKey = String(repo ?? "").trim().toLowerCase();
+  if (!repoKey) return null;
+
+  const episodics = await listAgentMemoriesByTypeScoped({
+    clientId: ctx.clientId,
+    agentId: ctx.agentId,
+    memoryType: "episodic",
+    limit: 120,
+  }).catch(() => []);
+
+  for (const m of episodics) {
+    const parsed = parseEpisodicMemoryContent(m.content);
+    if (!parsed?.artifacts?.length) continue;
+    for (const a of parsed.artifacts) {
+      const artifactRepo = typeof a.metadata?.repo === "string" ? String(a.metadata.repo).trim().toLowerCase() : "";
+      const artifactBranch = typeof a.ref === "string" ? a.ref.trim() : "";
+      if (!artifactRepo || !artifactBranch) continue;
+      if (artifactRepo !== repoKey) continue;
+      return { branch: artifactBranch, repo: artifactRepo };
+    }
+  }
+  return null;
+}
 
 export function registerGitHubTools(registry: ToolRegistry): void {
   registry.register({
@@ -23,6 +54,53 @@ export function registerGitHubTools(registry: ToolRegistry): void {
       branch: z.string().min(1),
     }),
     execute: async (ctx: ToolContext, args) => {
+      const requestedRepo = String(args.repo ?? "").trim();
+      const requestedBranch = String(args.branch ?? "").trim();
+      if (requestedRepo && requestedBranch) {
+        const hint = await findRecentRepoBranchHint(ctx, requestedRepo);
+        if (hint && hint.branch !== requestedBranch) {
+          const existsCheck = await github_branch_exists({ repo: requestedRepo, branch: hint.branch }, {
+            clientId: ctx.clientId,
+            agentId: ctx.agentId,
+          });
+          if (!existsCheck.ok) {
+            // If we cannot validate the hint, do not hard-block branch creation.
+            return await create_branch(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+          }
+          const hintExists = Boolean(existsCheck.metadata && (existsCheck.metadata as any).exists === true);
+          if (!hintExists) {
+            // Hint is stale (branch deleted), allow creating the requested branch.
+            return await create_branch(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+          }
+
+          // Optional stale check: if hinted branch has no diff vs requested base, treat it as stale.
+          const diffCheck = await github_list_changed_files(
+            { repo: requestedRepo, base: String(args.base ?? "main"), head: hint.branch },
+            { clientId: ctx.clientId, agentId: ctx.agentId }
+          );
+          if (diffCheck.ok) {
+            const files = Array.isArray((diffCheck.metadata as any)?.files) ? ((diffCheck.metadata as any).files as any[]) : [];
+            const totals = (diffCheck.metadata as any)?.totals ?? {};
+            const add = Number(totals.additions ?? 0);
+            const del = Number(totals.deletions ?? 0);
+            if (files.length === 0 && add === 0 && del === 0) {
+              return await create_branch(args, { clientId: ctx.clientId, agentId: ctx.agentId });
+            }
+          }
+
+          return {
+            ok: false,
+            message:
+              `Not executed: this agent recently worked in branch '${hint.branch}' for repo '${requestedRepo}'. ` +
+              "Reuse that branch unless the user explicitly asks for a new one.",
+            metadata: {
+              suggestedBranch: hint.branch,
+              requestedBranch,
+              repo: requestedRepo,
+            },
+          };
+        }
+      }
       return await create_branch(args, { clientId: ctx.clientId, agentId: ctx.agentId });
     },
   });

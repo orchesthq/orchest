@@ -169,6 +169,38 @@ export async function create_branch(
   }
 }
 
+export async function github_branch_exists(
+  input: { repo: string; branch: string },
+  ctx?: GitHubToolContext | null
+): Promise<GitHubToolResult> {
+  const creds = await getTokenAndRepo(ctx ?? null, input.repo);
+  if (!creds) return { ok: false, message: noAccessMessage() };
+  if ("error" in creds) return { ok: false, message: creds.error };
+
+  const repo = creds.repo;
+  const branch = String(input.branch ?? "").trim();
+  if (!branch) return { ok: false, message: "Not executed: branch is required." };
+
+  try {
+    await getRef(creds.token, repo, branch);
+    return {
+      ok: true,
+      message: `Branch '${branch}' exists.`,
+      metadata: { repo, branch, exists: true },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/\b404\b/.test(msg) || /reference not found|not found/i.test(msg)) {
+      return {
+        ok: true,
+        message: `Branch '${branch}' does not exist.`,
+        metadata: { repo, branch, exists: false },
+      };
+    }
+    return { ok: false, message: `Failed to check branch existence: ${msg}` };
+  }
+}
+
 export async function create_file_and_commit(
   input: { repo: string; branch: string; path: string; content: string; message: string },
   ctx?: GitHubToolContext | null
