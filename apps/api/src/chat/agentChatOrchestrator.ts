@@ -22,6 +22,7 @@ const SUMMARIZE_THREAD_LIKE =
   /\b(summarize|summary|recap|tl;dr)\b.*\b(thread|conversation|chat)\b|\b(this|current)\s+(thread|conversation|chat)\b/i;
 const SUMMARIZE_EXTERNAL_LIKE =
   /\b(summarize|summary|recap|tl;dr)\b.*\b(document|doc|file|text|content|notes|message)\b|\b(this)\s+(document|doc|file|text|content)\b/i;
+const CONTEXT_DEBUG = true
 
 export type OrchestratorOptions = {
   /**
@@ -111,6 +112,14 @@ async function resolveSingleSourceContext(input: {
   transport: ChatTransport;
 }): Promise<{ ok: true; contextText: string } | { ok: false; fallbackMessage: string; context: string }> {
   if (input.routing.singleSourceType === "thread") {
+    if (CONTEXT_DEBUG) {
+      console.log("[context][single_source][thread] resolve:start", {
+        surface: input.msg.surface,
+        conversationId: input.msg.conversationId,
+        threadId: input.msg.threadId ?? null,
+        hasFetchThreadContext: Boolean(input.transport.fetchThreadContext),
+      });
+    }
     if (!input.msg.threadId) {
       return {
         ok: false,
@@ -133,6 +142,13 @@ async function resolveSingleSourceContext(input: {
       })
       .catch(() => "");
     const cleaned = String(threadText ?? "").trim();
+    if (CONTEXT_DEBUG) {
+      console.log("[context][single_source][thread] resolve:fetched", {
+        threadId: input.msg.threadId,
+        chars: cleaned.length,
+        hasContent: cleaned.length > 0,
+      });
+    }
     if (!cleaned) {
       return {
         ok: false,
@@ -145,12 +161,25 @@ async function resolveSingleSourceContext(input: {
   }
 
   if (input.routing.singleSourceType === "external") {
+    if (CONTEXT_DEBUG) {
+      console.log("[context][single_source][external] resolve:start", {
+        surface: input.msg.surface,
+        conversationId: input.msg.conversationId,
+        contextKeys: Object.keys(input.msg.context ?? {}),
+      });
+    }
     // Future-ready source keys for adapters that pass explicit external content.
     const sourceKeys = ["source_text", "external_source_text", "document_text", "content_text"] as const;
     for (const key of sourceKeys) {
       const v = input.msg.context?.[key];
       if (typeof v === "string" && v.trim()) {
         const clipped = v.trim().slice(0, 40_000);
+        if (CONTEXT_DEBUG) {
+          console.log("[context][single_source][external] resolve:success", {
+            key,
+            chars: clipped.length,
+          });
+        }
         return { ok: true, contextText: `External source content:\n${clipped}` };
       }
     }
@@ -226,11 +255,30 @@ export async function handleInboundChatMessage(input: {
     };
 
     const routing = decideContextRouting({ msg, text });
+    if (CONTEXT_DEBUG) {
+      console.log("[context] routing", {
+        surface: msg.surface,
+        conversationId: msg.conversationId,
+        threadId: msg.threadId ?? null,
+        textPreview: text.slice(0, 120),
+        contextMode: routing.contextMode,
+        singleSourceType: routing.singleSourceType ?? null,
+        contextPolicy: routing.contextPolicy,
+        hasActiveSession: routing.hasActiveSession,
+        sessionScore: routing.sessionScore,
+      });
+    }
     let threadContext = "";
     let singleSourceContext = "";
     if (routing.contextMode === "single_source") {
       const resolved = await resolveSingleSourceContext({ routing, msg, transport });
       if (!resolved.ok) {
+        if (CONTEXT_DEBUG) {
+          console.log("[context][single_source] resolve:failed", {
+            singleSourceType: routing.singleSourceType ?? null,
+            reason: resolved.context,
+          });
+        }
         const notice = await generateNotice(resolved.context, resolved.fallbackMessage);
         await transport.postMessage({
           conversationId: msg.conversationId,
@@ -241,6 +289,12 @@ export async function handleInboundChatMessage(input: {
         return;
       }
       singleSourceContext = `\n\nSource context (single source):\n${resolved.contextText}`;
+      if (CONTEXT_DEBUG) {
+        console.log("[context][single_source] resolve:ok", {
+          singleSourceType: routing.singleSourceType,
+          chars: resolved.contextText.length,
+        });
+      }
     } else if (msg.threadId && transport.fetchThreadContext) {
       threadContext = await transport
         .fetchThreadContext({
@@ -249,6 +303,13 @@ export async function handleInboundChatMessage(input: {
           maxMessages: 10,
         })
         .catch(() => "");
+      if (CONTEXT_DEBUG) {
+        console.log("[context][multi_source] thread_context", {
+          threadId: msg.threadId,
+          chars: threadContext.length,
+          hasContent: threadContext.trim().length > 0,
+        });
+      }
     }
 
     const task = await createTaskForAgentScoped({
