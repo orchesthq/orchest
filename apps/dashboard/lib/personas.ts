@@ -82,3 +82,8 @@ export const DEFAULT_ROLE_BY_PERSONA: Record<string, string> = {
   sofia: "ai_data_analyst",
   amira: "ai_customer_support",
 };
+
+/**
+ * NOTE: This file is imported by both Server and Client Components.
+ * Keep it as a pure data module (no browser-only APIs, no side effects).
+ */
