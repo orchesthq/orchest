@@ -22,6 +22,10 @@ const SUMMARIZE_THREAD_LIKE =
   /\b(summarize|summary|recap|tl;dr)\b.*\b(thread|conversation|chat)\b|\b(this|current)\s+(thread|conversation|chat)\b/i;
 const SUMMARIZE_EXTERNAL_LIKE =
   /\b(summarize|summary|recap|tl;dr)\b.*\b(document|doc|file|text|content|notes|message)\b|\b(this)\s+(document|doc|file|text|content)\b/i;
+const CONTEXT_DEBUG = true;
+function contextLog(...args: any[]) {
+  if (CONTEXT_DEBUG) console.log("[context]", ...args);
+}
 
 export type OrchestratorOptions = {
   /**
@@ -111,6 +115,15 @@ async function resolveSingleSourceContext(input: {
   transport: ChatTransport;
 }): Promise<{ ok: true; contextText: string } | { ok: false; fallbackMessage: string; context: string }> {
   if (input.routing.singleSourceType === "thread") {
+    contextLog("single_source:thread:resolve:start", {
+      surface: input.msg.surface,
+      kind: input.msg.kind,
+      conversationId: input.msg.conversationId,
+      threadId: input.msg.threadId ?? null,
+      ts: input.msg.ts,
+      strictThreadOnly: input.msg.threadId !== input.msg.ts,
+      hasFetchThreadContext: Boolean(input.transport.fetchThreadContext),
+    });
     if (!input.msg.threadId) {
       return {
         ok: false,
@@ -136,6 +149,12 @@ async function resolveSingleSourceContext(input: {
       })
       .catch(() => "");
     const cleaned = String(threadText ?? "").trim();
+    contextLog("single_source:thread:resolve:fetched", {
+      conversationId: input.msg.conversationId,
+      threadId: input.msg.threadId,
+      chars: cleaned.length,
+      hasContent: Boolean(cleaned),
+    });
     if (!cleaned) {
       return {
         ok: false,
@@ -229,6 +248,18 @@ export async function handleInboundChatMessage(input: {
     };
 
     const routing = decideContextRouting({ msg, text });
+    contextLog("routing", {
+      surface: msg.surface,
+      kind: msg.kind,
+      conversationId: msg.conversationId,
+      threadId: msg.threadId ?? null,
+      ts: msg.ts,
+      contextMode: routing.contextMode,
+      singleSourceType: routing.singleSourceType ?? null,
+      contextPolicy: routing.contextPolicy,
+      hasActiveSession: routing.hasActiveSession,
+      sessionScore: routing.sessionScore,
+    });
     let threadContext = "";
     let singleSourceContext = "";
     if (routing.contextMode === "single_source") {

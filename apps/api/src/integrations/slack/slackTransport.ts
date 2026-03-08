@@ -1,6 +1,11 @@
 import type { ChatTransport } from "../../chat/types";
 import { slackApi } from "./slackApiClient";
 
+const SLACK_THREAD_DEBUG = true;
+function slackThreadLog(...args: any[]) {
+  if (SLACK_THREAD_DEBUG) console.log("[slack][thread]", ...args);
+}
+
 function normalizeSlackText(text: string): string {
   return String(text ?? "")
     .replace(/<@[A-Z0-9]+>/g, "") // strip mention tokens
@@ -92,15 +97,19 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
     fetchThreadContext: async ({ conversationId, threadId, maxMessages, strictThreadOnly }) => {
       try {
         const max = Math.max(5, Math.min(200, Number(maxMessages ?? 20)));
+        slackThreadLog("fetch:start", { conversationId, threadId, max, strictThreadOnly: Boolean(strictThreadOnly) });
         let messages: any[] = [];
         let repliesHasMore = false;
         let usedHistoryFallback = false;
         let repliesFailed = false;
+        let repliesFailure: string | null = null;
         try {
           // Page through replies so we don't accidentally summarize only the first message/page.
           let cursor: string | undefined;
           const seenTs = new Set<string>();
+          let pageNo = 0;
           while (messages.length < max) {
+            pageNo += 1;
             const json = await slackApi(input.token, "conversations.replies", {
               channel: conversationId,
               ts: threadId,
@@ -108,6 +117,14 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
               cursor,
             });
             const page: any[] = Array.isArray(json?.messages) ? json.messages : [];
+            slackThreadLog("replies:page", {
+              conversationId,
+              threadId,
+              pageNo,
+              pageCount: page.length,
+              hasMore: Boolean((json as any)?.has_more),
+              nextCursor: String((json as any)?.response_metadata?.next_cursor ?? "").slice(0, 16),
+            });
             for (const m of page) {
               const ts = String(m?.ts ?? "");
               if (!ts || seenTs.has(ts)) continue;
@@ -122,9 +139,12 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             if (!nextCursor) break;
             cursor = nextCursor;
           }
-        } catch {
+          slackThreadLog("replies:done", { conversationId, threadId, fetched: messages.length, repliesHasMore });
+        } catch (err) {
           // replies can fail on some surfaces/contexts; history fallback below may still work.
           repliesFailed = true;
+          repliesFailure = err instanceof Error ? err.message : String(err);
+          slackThreadLog("replies:error", { conversationId, threadId, error: repliesFailure });
         }
         let source = messages;
 
@@ -152,6 +172,13 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             const threadOnly = hm
               .filter((m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId)
               .sort((a, b) => Number(String(a?.ts ?? "0")) - Number(String(b?.ts ?? "0")));
+            slackThreadLog("history:fallback", {
+              conversationId,
+              threadId,
+              hmCount: hm.length,
+              threadOnlyCount: threadOnly.length,
+              strictThreadOnly: Boolean(strictThreadOnly),
+            });
             if (threadOnly.length > 0) {
               source = threadOnly;
             } else if (!strictThreadOnly && hm.length > 1) {
@@ -160,6 +187,7 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
             }
           } catch {
             // ignore
+            slackThreadLog("history:fallback:error", { conversationId, threadId });
           }
         }
 
@@ -176,7 +204,17 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           const threadScopedCount = source.filter(
             (m) => String(m?.thread_ts ?? "") === threadId || String(m?.ts ?? "") === threadId
           ).length;
-          if (threadScopedCount === 0) return "";
+          if (threadScopedCount === 0) {
+            // Sometimes Slack payloads are inconsistent; log and continue instead of hard-failing.
+            const first = source[0] ?? null;
+            slackThreadLog("strict:threadScopedCount_zero", {
+              conversationId,
+              threadId,
+              sourceCount: source.length,
+              firstTs: String(first?.ts ?? ""),
+              firstThreadTs: String(first?.thread_ts ?? ""),
+            });
+          }
           // If we only have the root message but root says there are replies, treat as unresolved.
           // Do not require an exact reply_count match: Slack counts can include deleted/hidden/system items.
           const root = source.find((m) => String(m?.ts ?? "") === threadId);
@@ -184,10 +222,29 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           const observedReplies = source.filter((m) => String(m?.thread_ts ?? "") === threadId).length;
           const appearsRootOnly = source.length <= 1 || observedReplies === 0;
           if ((repliesFailed || usedHistoryFallback) && appearsRootOnly && expectedReplies > 0) {
+            slackThreadLog("strict:return_empty_incomplete", {
+              conversationId,
+              threadId,
+              repliesFailed,
+              repliesFailure,
+              usedHistoryFallback,
+              sourceCount: source.length,
+              expectedReplies,
+              observedReplies,
+            });
             return "";
           }
         }
-        if (lines.length === 0) return "";
+        if (lines.length === 0) {
+          slackThreadLog("return_empty_no_lines", {
+            conversationId,
+            threadId,
+            sourceCount: source.length,
+            allTextCount: allTextMessages.length,
+            strictThreadOnly: Boolean(strictThreadOnly),
+          });
+          return "";
+        }
 
         const maybeTruncated =
           repliesHasMore ||
@@ -197,8 +254,21 @@ export function createSlackTransport(input: { token: string }): ChatTransport {
           ? `Thread source note: this appears to be a long thread; only the latest ${lines.length} messages were included.`
           : `Thread source note: included ${lines.length} messages from this thread.`;
 
+        slackThreadLog("fetch:done", {
+          conversationId,
+          threadId,
+          outputLines: lines.length,
+          maybeTruncated,
+          repliesFailed,
+          usedHistoryFallback,
+        });
         return ["", "Thread context (most recent):", metadataLine, ...lines].join("\n");
-      } catch {
+      } catch (err) {
+        slackThreadLog("fetch:error", {
+          conversationId,
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
         return "";
       }
     },
