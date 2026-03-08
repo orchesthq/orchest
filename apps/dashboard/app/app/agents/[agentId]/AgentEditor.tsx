@@ -118,6 +118,7 @@ export function AgentEditor(props: Props) {
               type="button"
               className="text-xs font-medium text-zinc-700 underline underline-offset-2 hover:text-zinc-900"
               onClick={() => {
+                if (!props.personaKey) return;
                 const persona = getPersonaByKey(props.personaKey);
                 if (!persona) return;
 
