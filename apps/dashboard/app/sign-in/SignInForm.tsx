@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
+import Link from "next/link";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
 export function SignInForm() {
@@ -58,6 +59,11 @@ export function SignInForm() {
           autoComplete="current-password"
           required
         />
+        <div className="text-right">
+          <Link className="text-xs text-zinc-600 hover:text-zinc-900 hover:underline" href="/forgot-password">
+            Forgot password?
+          </Link>
+        </div>
       </div>
 
       {error && (

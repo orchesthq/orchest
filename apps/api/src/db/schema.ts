@@ -8,6 +8,7 @@ import { query } from "./client";
 //   memory writes to that `clientId`.
 
 const uuidSchema = z.string().uuid();
+const DEFAULT_MARKUP_MULTIPLIER = 1.3;
 
 export const taskStatusSchema = z.enum([
   "pending",
@@ -1392,7 +1393,7 @@ export async function getClientBillingProfileOrDefault(clientId: string): Promis
     [
       "select",
       "  c.id as client_id,",
-      "  coalesce(cbp.markup_multiplier, 1.0)::text as markup_multiplier,",
+      `  coalesce(cbp.markup_multiplier, ${DEFAULT_MARKUP_MULTIPLIER})::text as markup_multiplier,`,
       "  coalesce(cbp.free_monthly_usd_micros, 0)::text as free_monthly_usd_micros,",
       "  cbp.monthly_budget_usd_micros::text as monthly_budget_usd_micros,",
       "  coalesce(cbp.billing_mode, 'usd_credits')::text as billing_mode",
@@ -1432,7 +1433,7 @@ export async function upsertClientBillingProfile(input: {
   const { rows } = await query<ClientBillingProfileRow>(
     [
       "insert into client_billing_profiles (client_id, markup_multiplier, free_monthly_usd_micros, monthly_budget_usd_micros, billing_mode)",
-      "values ($1, coalesce($2, 1.0), coalesce($3, 0), $4, coalesce($5, 'usd_credits'))",
+      `values ($1, coalesce($2, ${DEFAULT_MARKUP_MULTIPLIER}), coalesce($3, 0), $4, coalesce($5, 'usd_credits'))`,
       "on conflict (client_id) do update set",
       "  markup_multiplier = coalesce($2, client_billing_profiles.markup_multiplier),",
       "  free_monthly_usd_micros = coalesce($3, client_billing_profiles.free_monthly_usd_micros),",

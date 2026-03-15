@@ -68,4 +68,25 @@ export async function sendClientInviteEmail(input: {
   });
 }
 
+export async function sendPasswordResetEmail(input: {
+  toEmail: string;
+  resetUrl: string;
+}): Promise<void> {
+  const resend = getResendClient();
+  const from = getFromAddress();
+  await resend.emails.send({
+    from,
+    to: [input.toEmail],
+    subject: "Reset your Orchest password",
+    text: [
+      "We received a request to reset your Orchest password.",
+      "",
+      "Reset your password here:",
+      input.resetUrl,
+      "",
+      "If you did not request this, you can ignore this message.",
+    ].join("\n"),
+  });
+}
+
 export { EmailConfigError };

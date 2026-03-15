@@ -97,7 +97,7 @@ export async function listPendingInvitesByClientId(clientId: string): Promise<Cl
 export async function createEmailVerificationToken(input: {
   userId: string;
   email: string;
-  purpose: "signup" | "invite";
+  purpose: "signup" | "invite" | "password_reset";
   expiresInHours?: number;
 }): Promise<string> {
   const token = crypto.randomBytes(24).toString("hex");
@@ -260,6 +260,65 @@ export async function revokeUserAccessFromClient(input: {
     [input.clientId, input.userId]
   );
   if (rows.length === 0) throw new Error("User membership not found.");
+
+  const { rows: remaining } = await query<{ count: string }>(
+    [
+      "select count(*)::text as count",
+      "from client_memberships",
+      "where user_id = $1",
+    ].join("\n"),
+    [input.userId]
+  );
+  const remainingCount = Number(remaining[0]?.count ?? "0");
+  if (remainingCount <= 0) {
+    const { rows: ownedClients } = await query<{ count: string }>(
+      [
+        "select count(*)::text as count",
+        "from clients",
+        "where owner_user_id = $1",
+      ].join("\n"),
+      [input.userId]
+    );
+    const ownedClientCount = Number(ownedClients[0]?.count ?? "0");
+    if (ownedClientCount <= 0) {
+      // Cleanly remove user if they no longer belong to any client.
+      await query("delete from users where id = $1", [input.userId]);
+    }
+  }
+}
+
+export async function createPasswordResetTokenForEmail(emailRaw: string): Promise<string | null> {
+  const email = emailRaw.toLowerCase();
+  const user = await getUserByEmail(email);
+  if (!user || !user.email_verified_at) return null;
+  return await createEmailVerificationToken({
+    userId: user.id,
+    email: user.email,
+    purpose: "password_reset",
+    expiresInHours: 2,
+  });
+}
+
+export async function resetPasswordFromToken(input: {
+  token: string;
+  newPassword: string;
+}): Promise<boolean> {
+  const tokenHash = sha256(input.token);
+  const { rows } = await query<{ user_id: string; purpose: string }>(
+    [
+      "update user_email_verification_tokens",
+      "set used_at = now()",
+      "where token_hash = $1 and purpose = 'password_reset' and used_at is null and expires_at > now()",
+      "returning user_id, purpose",
+    ].join("\n"),
+    [tokenHash]
+  );
+  const row = rows[0];
+  if (!row) return false;
+
+  const password_hash = await bcrypt.hash(input.newPassword, 12);
+  await query("update users set password_hash = $2 where id = $1", [row.user_id, password_hash]);
+  return true;
 }
 
 function sha256(value: string): string {
