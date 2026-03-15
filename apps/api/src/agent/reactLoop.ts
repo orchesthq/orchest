@@ -7,7 +7,7 @@ import {
 import { addAgentMemoryScoped, completeTask, failTask, getTaskContextById, updateTaskStatus } from "../db/schema";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
 import { runReActLoop, type ToolExecutionRecord } from "./react_runner";
-import { classifyCapabilities, finalizeAgentChatResponse } from "../services/openaiService";
+import { classifyCapabilities, finalizeAgentChatResponse } from "../services/llm/llmOrchestrationService";
 import { getToolAccessSummary } from "./tools/toolInventory";
 import { selectCapabilities } from "./capabilities/selector";
 import { getCapability, listCapabilities } from "./capabilities/capabilityRegistry";

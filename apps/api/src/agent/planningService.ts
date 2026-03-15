@@ -1,5 +1,5 @@
 import type { AgentRow, AgentMemoryRow, TaskRow } from "../db/schema";
-import { planTask, type PlanOutput } from "../services/openaiService";
+import { planTask, type PlanOutput } from "../services/llm/llmOrchestrationService";
 import { memoriesForPrompt } from "./memoryService";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
 

@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import ts from "typescript";
-import { embedText } from "../services/openaiService";
+import { embedText } from "../services/llm/llmOrchestrationService";
 import {
   deleteKbChunksNotInRangesForFile,
   insertKbChunk,

@@ -1,13 +1,6 @@
 import { z } from "zod";
-import { isDbConfigured } from "../db/client";
-import {
-  getClientBillingProfileOrDefault,
-  getPartnerSetting,
-  insertTokenLedgerEntry,
-  insertTokenUsageEvent,
-  resolveLlmPricingForUsage,
-  updateTokenUsageEventPricing,
-} from "../db/schema";
+import { getLlmClient } from "./llmClientFactory";
+import type { LlmChatMessage, LlmToolCall, TokenUsageContext } from "./llmClient";
 
 export type MemoryForPrompt = {
   memory_type: "profile" | "episodic" | "semantic";
@@ -48,152 +41,14 @@ const summarySchema = z.object({
   summary: z.string().min(1),
 });
 
-type OpenAiConfig = {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-};
-
-type TokenUsageContext = {
-  clientId: string;
-  agentId?: string;
-  taskId?: string;
-  operation: string;
-  metadata?: Record<string, unknown>;
-};
-
-const openAiPartnerSettingsSchema = z
-  .object({
-    apiKey: z.string().min(1).optional(),
-    baseUrl: z.string().min(1).optional(),
-    model: z.string().min(1).optional(),
-  })
-  .passthrough();
-
-const OPENAI_SETTINGS_CACHE_TTL_MS = 30_000;
-let openAiConfigCache:
-  | {
-      loadedAtMs: number;
-      config: OpenAiConfig | null;
-    }
-  | undefined;
-
-function normalizeBaseUrl(raw: string | undefined): string {
-  return (raw ?? "https://api.openai.com/v1").replace(/\/+$/, "");
-}
-
-async function getOpenAiConfigFromDb(): Promise<OpenAiConfig | null> {
-  const row = await getPartnerSetting({ partner: "openai", key: "default" });
-  if (!row) return null;
-  const parsed = openAiPartnerSettingsSchema.safeParse(row.settings ?? null);
-  if (!parsed.success) return null;
-  const apiKey = parsed.data.apiKey?.trim();
-  if (!apiKey) return null;
-  return {
-    apiKey,
-    baseUrl: normalizeBaseUrl(parsed.data.baseUrl),
-    model: parsed.data.model ?? "gpt-4o-mini",
-  };
-}
-
-async function getOpenAiConfig(): Promise<OpenAiConfig | null> {
-  const now = Date.now();
-  if (openAiConfigCache && now - openAiConfigCache.loadedAtMs < OPENAI_SETTINGS_CACHE_TTL_MS) {
-    return openAiConfigCache.config;
-  }
-
-  let config: OpenAiConfig | null = null;
-  if (isDbConfigured()) {
-    try {
-      config = await getOpenAiConfigFromDb();
-    } catch (err) {
-      console.error("[openai] failed to load settings from DB", err);
-    }
-  }
-
-  openAiConfigCache = { loadedAtMs: now, config };
-  return config;
-}
-
-type OpenAiChatMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | { role: "assistant"; content?: string | null; tool_calls?: OpenAiToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
-
-type OpenAiToolCall = {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-};
-
-async function chatCompletionRaw(
-  cfg: OpenAiConfig,
-  body: any,
-  usageContext?: TokenUsageContext
-): Promise<any> {
-  const url = `${cfg.baseUrl}/chat/completions`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: cfg.model, temperature: 0.2, ...body }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`OpenAI-compatible API error: ${res.status} ${res.statusText} ${body}`);
-  }
-
-  const json = (await res.json()) as any;
-  await persistUsageEvent({
-    provider: "openai_compatible",
-    operation: usageContext?.operation ?? "chat.completion",
-    body,
-    response: json,
-    usageContext,
-  });
-  return json;
-}
-
-async function embeddingsRaw(
-  cfg: OpenAiConfig,
-  body: any,
-  usageContext?: TokenUsageContext
-): Promise<any> {
-  const url = `${cfg.baseUrl}/embeddings`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`OpenAI-compatible embeddings error: ${res.status} ${res.statusText} ${text}`);
-  }
-  const json = (await res.json()) as any;
-  await persistUsageEvent({
-    provider: "openai_compatible",
-    operation: usageContext?.operation ?? "embeddings.create",
-    body,
-    response: json,
-    usageContext,
-  });
-  return json;
-}
-
 async function chatCompletion(
-  cfg: OpenAiConfig,
   input: { system: string; user: string },
   usageContext?: TokenUsageContext
-): Promise<string> {
-  const json = await chatCompletionRaw(
-    cfg,
+): Promise<string | null> {
+  const client = await getLlmClient();
+  if (!client) return null;
+
+  const json = await client.chatCompletionRaw(
     {
       messages: [
         { role: "system", content: input.system },
@@ -224,12 +79,12 @@ function deterministicMockPlan(taskInput: string): PlanOutput {
         tool: "noop",
         arguments: {
           reason:
-            "LLM is not configured; configure partner_settings(openai/default) to enable real execution.",
+            "LLM client is not configured; configure partner_settings(openai/default) to enable real execution.",
         },
       },
     ],
     notes:
-      "Mock plan generated because OpenAI settings are not configured. Set partner_settings(openai/default) to enable real planning.",
+      "Mock plan generated because LLM client is not configured. Set partner_settings(openai/default) to enable real planning.",
   };
 }
 
@@ -243,7 +98,7 @@ function deterministicMockSummary(results: {
     "Executed steps:",
     ...results.executed.map((r, i) => `${i + 1}. ${r.step}\n   - ${r.result}`),
     "",
-    "Summary: Completed simulated execution (LLM mocked). Configure OpenAI settings to enable real planning/summarization.",
+    "Summary: Completed simulated execution (LLM mocked). Configure LLM settings to enable real planning/summarization.",
   ];
   return lines.join("\n");
 }
@@ -255,8 +110,8 @@ export async function planTask(input: {
   availableTools: Array<{ name: string; description: string }>;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<PlanOutput> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return deterministicMockPlan(input.taskInput);
+  const client = await getLlmClient();
+  if (!client) return deterministicMockPlan(input.taskInput);
 
   const memoryBlock =
     input.memories.length === 0
@@ -318,8 +173,7 @@ export async function planTask(input: {
     },
   ];
 
-  const json = await chatCompletionRaw(
-    cfg,
+  const json = await client.chatCompletionRaw(
     {
       messages: [
         { role: "system", content: system },
@@ -332,7 +186,7 @@ export async function planTask(input: {
   );
 
   const toolCall = (json?.choices?.[0]?.message?.tool_calls?.[0] ??
-    null) as OpenAiToolCall | null;
+    null) as LlmToolCall | null;
   if (toolCall?.type === "function" && toolCall.function?.name === "orchest_plan") {
     const args = safeParseJson(toolCall.function.arguments);
     const parsed = planSchema.safeParse(args);
@@ -353,8 +207,8 @@ export async function summarizeResults(input: {
   executed: Array<{ step: string; result: string }>;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<string> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return deterministicMockSummary(input);
+  const client = await getLlmClient();
+  if (!client) return deterministicMockSummary(input);
 
   const system = [
     input.agentSystemPrompt,
@@ -377,10 +231,10 @@ export async function summarizeResults(input: {
   ].join("\n");
 
   const content = await chatCompletion(
-    cfg,
     { system, user },
     withUsageContext(input.usageContext, "chat.completion.summarize")
   );
+  if (!content) return deterministicMockSummary(input);
   const maybeJson = safeParseJson(content);
   const parsed = summarySchema.safeParse(maybeJson);
   if (!parsed.success) return deterministicMockSummary(input);
@@ -388,7 +242,7 @@ export async function summarizeResults(input: {
 }
 
 /**
- * Classifies a Slack message: greeting/quick chat → natural reply; work request → hand off to task flow.
+ * Classifies a Slack message: greeting/quick chat → natural reply; work request → hand off to full task flow.
  * Responds like a colleague: brief, human. No "Got it — I'm on it" for simple exchanges.
  */
 export async function tryConversationalReply(input: {
@@ -398,8 +252,8 @@ export async function tryConversationalReply(input: {
   userMessage: string;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<ConversationalResult> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return { type: "task" };
+  const client = await getLlmClient();
+  if (!client) return { type: "task" };
 
   const system = [
     input.systemPrompt,
@@ -417,10 +271,10 @@ export async function tryConversationalReply(input: {
   const user = input.userMessage;
 
   const content = await chatCompletion(
-    cfg,
     { system, user },
     withUsageContext(input.usageContext, "chat.completion.chat_classify")
   );
+  if (!content) return { type: "task" };
   const trimmed = content.trim();
   if (trimmed === "__TASK__" || trimmed.toLowerCase().includes("__task__")) {
     return { type: "task" };
@@ -434,8 +288,8 @@ export async function classifyCapabilities(input: {
   toolAccessSummary?: string;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<CapabilityClassification | null> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return null;
+  const client = await getLlmClient();
+  if (!client) return null;
 
   const ids = input.availableCapabilities.map((c) => c.id);
   const idList = ids.map((id) => `- ${id}`).join("\n");
@@ -477,10 +331,10 @@ export async function classifyCapabilities(input: {
     .join("\n");
 
   const content = await chatCompletion(
-    cfg,
     { system, user },
     withUsageContext(input.usageContext, "chat.completion.classify_capabilities")
   );
+  if (!content) return null;
   const parsed = schema.safeParse(safeParseJson(content));
   if (!parsed.success) return null;
 
@@ -496,15 +350,14 @@ export async function embedText(input: {
   model?: string;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<{ embedding: number[]; model: string } | null> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return null;
+  const client = await getLlmClient();
+  if (!client) return null;
 
   const model = input.model ?? "text-embedding-3-small";
   const text = String(input.text ?? "").trim();
   if (!text) return null;
 
-  const json = await embeddingsRaw(
-    cfg,
+  const json = await client.embeddingsRaw(
     {
       model,
       input: text.length > 20_000 ? text.slice(0, 20_000) : text,
@@ -526,8 +379,8 @@ export async function generatePlanAck(input: {
   profileMemories: string[];
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<string> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) {
+  const client = await getLlmClient();
+  if (!client) {
     return "On it - I'll look this up and come back with one answer.";
   }
 
@@ -562,8 +415,7 @@ export async function generatePlanAck(input: {
     steps,
   ].join("\n");
 
-  const json = await chatCompletionRaw(
-    cfg,
+  const json = await client.chatCompletionRaw(
     {
       messages: [
         { role: "system", content: system },
@@ -588,8 +440,8 @@ export async function generateAgentNotice(input: {
   fallback: string;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<string> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return input.fallback;
+  const client = await getLlmClient();
+  if (!client) return input.fallback;
 
   const profileBlock =
     input.profileMemories.length === 0
@@ -609,8 +461,7 @@ export async function generateAgentNotice(input: {
   const user = ["Context:", input.context, "", "Profile memories:", profileBlock].join("\n");
 
   try {
-    const json = await chatCompletionRaw(
-      cfg,
+    const json = await client.chatCompletionRaw(
       {
         messages: [
           { role: "system", content: system },
@@ -653,8 +504,8 @@ export async function finalizeAgentChatResponse(input: {
   profileMemories: string[];
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<string> {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) return input.draft;
+  const client = await getLlmClient();
+  if (!client) return input.draft;
 
   const profileBlock =
     input.profileMemories.length === 0
@@ -693,8 +544,7 @@ export async function finalizeAgentChatResponse(input: {
     "Now write the final chat response. Use headings and bullets if helpful.",
   ].join("\n");
 
-  const json = await chatCompletionRaw(
-    cfg,
+  const json = await client.chatCompletionRaw(
     {
       messages: [
         { role: "system", content: system },
@@ -726,118 +576,6 @@ function safeParseJson(text: string): unknown {
   }
 }
 
-async function persistUsageEvent(input: {
-  provider: string;
-  operation: string;
-  body: any;
-  response: any;
-  usageContext?: TokenUsageContext;
-}): Promise<void> {
-  const usage = input.response?.usage;
-  const ctx = input.usageContext;
-  if (!usage || !ctx?.clientId) return;
-
-  const promptTokens = toNonNegativeInt(usage?.prompt_tokens);
-  const completionTokens = toNonNegativeInt(usage?.completion_tokens);
-  if (promptTokens + completionTokens <= 0) return;
-
-  const cachedPromptTokens = toNonNegativeInt(
-    usage?.prompt_tokens_details?.cached_tokens ?? usage?.input_tokens_details?.cached_tokens
-  );
-  const reasoningTokens = toNonNegativeInt(
-    usage?.completion_tokens_details?.reasoning_tokens ?? usage?.output_tokens_details?.reasoning_tokens
-  );
-
-  const model = String(input.response?.model ?? input.body?.model ?? "").trim();
-  if (!model) return;
-
-  try {
-    const usageEvent = await insertTokenUsageEvent({
-      clientId: ctx.clientId,
-      agentId: ctx.agentId,
-      taskId: ctx.taskId,
-      provider: input.provider,
-      model,
-      operation: input.operation,
-      promptTokens,
-      completionTokens,
-      cachedPromptTokens,
-      reasoningTokens,
-      providerRequestId:
-        typeof input.response?.id === "string" && input.response.id.trim() ? input.response.id.trim() : null,
-      metadata: {
-        ...(ctx.metadata ?? {}),
-        finishReason: input.response?.choices?.[0]?.finish_reason ?? null,
-      },
-    });
-
-    const billing = await getClientBillingProfileOrDefault(ctx.clientId);
-    const pricing = await resolveLlmPricingForUsage({
-      provider: usageEvent.provider,
-      model: usageEvent.model,
-      operation: usageEvent.operation,
-      occurredAt: new Date(usageEvent.occurred_at),
-    });
-
-    const inputCostUsdMicros = pricing
-      ? microsFromTokens(pricing.inputUsdPer1mTokensMicros, usageEvent.prompt_tokens)
-      : 0;
-    const outputCostUsdMicros = pricing
-      ? microsFromTokens(pricing.outputUsdPer1mTokensMicros, usageEvent.completion_tokens)
-      : 0;
-    const totalCostUsdMicros = inputCostUsdMicros + outputCostUsdMicros;
-    const billableUsdMicros = Math.max(
-      0,
-      Math.round(totalCostUsdMicros * Math.max(0, Number(billing.markupMultiplier) || 1))
-    );
-
-    await updateTokenUsageEventPricing({
-      eventId: usageEvent.id,
-      clientId: ctx.clientId,
-      inputCostUsdMicros,
-      outputCostUsdMicros,
-      totalCostUsdMicros,
-      markupMultiplierSnapshot: billing.markupMultiplier,
-      billableUsdMicros,
-      pricingVersion: pricing?.pricingVersion ?? "unpriced",
-      pricingMissing: !pricing,
-    });
-
-    if (billableUsdMicros > 0) {
-      await insertTokenLedgerEntry({
-        clientId: ctx.clientId,
-        entryType: "usage_debit",
-        tokens: -billableUsdMicros,
-        referenceType: "token_usage_event",
-        referenceId: usageEvent.id,
-        metadata: {
-          provider: usageEvent.provider,
-          model: usageEvent.model,
-          operation: usageEvent.operation,
-          totalTokens: usageEvent.total_tokens,
-          billableUsdMicros,
-          pricingVersion: pricing?.pricingVersion ?? "unpriced",
-        },
-      });
-    }
-  } catch (err) {
-    console.error("[openai] failed to persist token usage event", err);
-  }
-}
-
-function toNonNegativeInt(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.floor(n);
-}
-
-function microsFromTokens(usdPer1mTokensMicros: number, tokens: number): number {
-  const priceMicros = Math.max(0, Number(usdPer1mTokensMicros) || 0);
-  const count = Math.max(0, Number(tokens) || 0);
-  if (priceMicros === 0 || count === 0) return 0;
-  return Math.round((priceMicros * count) / 1_000_000);
-}
-
 function withUsageContext(
   usageContext: Omit<TokenUsageContext, "operation"> | undefined,
   operation: string
@@ -857,20 +595,19 @@ export type AgentToolCall = {
 
 export async function agentChatWithTools(input: {
   system: string;
-  messages: Array<Omit<OpenAiChatMessage, "role"> & { role: "user" | "assistant" | "tool" }>;
+  messages: Array<Omit<LlmChatMessage, "role"> & { role: "user" | "assistant" | "tool" }>;
   tools: Array<{ type: "function"; function: { name: string; description: string; parameters: any } }>;
   usageContext?: Omit<TokenUsageContext, "operation">;
 }): Promise<
   | { type: "final"; final: string }
-  | { type: "tool"; assistantMessage: OpenAiChatMessage; toolCalls: AgentToolCall[] }
+  | { type: "tool"; assistantMessage: LlmChatMessage; toolCalls: AgentToolCall[] }
 > {
-  const cfg = await getOpenAiConfig();
-  if (!cfg) {
+  const client = await getLlmClient();
+  if (!client) {
     return { type: "final", final: "LLM is not configured. Configure partner_settings(openai/default) to enable agent execution." };
   }
 
-  const json = await chatCompletionRaw(
-    cfg,
+  const json = await client.chatCompletionRaw(
     {
       messages: [{ role: "system", content: input.system }, ...input.messages],
       tools: input.tools,
@@ -880,8 +617,8 @@ export async function agentChatWithTools(input: {
     withUsageContext(input.usageContext, "chat.completion.react")
   );
 
-  const msg = (json?.choices?.[0]?.message ?? null) as OpenAiChatMessage | null;
-  const toolCalls = (msg as any)?.tool_calls as OpenAiToolCall[] | undefined;
+  const msg = (json?.choices?.[0]?.message ?? null) as LlmChatMessage | null;
+  const toolCalls = (msg as any)?.tool_calls as LlmToolCall[] | undefined;
   if (msg && Array.isArray(toolCalls) && toolCalls.length > 0) {
     const parsedToolCalls: AgentToolCall[] = toolCalls.map((tc) => {
       const parsedArgs = safeParseJson(tc.function?.arguments ?? "");
@@ -918,4 +655,3 @@ export async function agentChatWithTools(input: {
 
   return { type: "final", final: "No response from model." };
 }
-

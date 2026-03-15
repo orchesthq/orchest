@@ -7,7 +7,7 @@ import {
 } from "../db/schema";
 import { buildEpisodicMemoryContent, loadAgentMemories, type ConversationMemoryContext } from "./memoryService";
 import { createPlan } from "./planningService";
-import { summarizeResults } from "../services/openaiService";
+import { summarizeResults } from "../services/llm/llmOrchestrationService";
 import { createDefaultToolRegistry } from "./tools/defaultRegistry";
 import { runAgentTaskReAct } from "./reactLoop";
 

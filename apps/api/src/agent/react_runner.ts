@@ -1,5 +1,5 @@
 import type { ToolRegistry, ToolResult } from "./tools/registry";
-import { agentChatWithTools } from "../services/openaiService";
+import { agentChatWithTools } from "../services/llm/llmOrchestrationService";
 import type { CapabilityId } from "./capabilities/types";
 import type { ToolAccessSummary } from "./tools/toolInventory";
 import { getCapability } from "./capabilities/capabilityRegistry";

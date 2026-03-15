@@ -1,4 +1,4 @@
-import type { MemoryForPrompt } from "../services/openaiService";
+import type { MemoryForPrompt } from "../services/llm/llmOrchestrationService";
 import {
   addAgentMemoryScoped,
   listAgentMemoriesByTypeScoped,

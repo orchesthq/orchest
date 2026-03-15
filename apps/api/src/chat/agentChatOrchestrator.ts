@@ -5,7 +5,7 @@ import {
 } from "../db/schema";
 import { runAgentTask } from "../agent/agentLoop";
 import type { ContextMode, MemoryContextPolicy, SingleSourceType } from "../agent/memoryService";
-import { generateAgentNotice, generatePlanAck, tryConversationalReply } from "../services/openaiService";
+import { generateAgentNotice, generatePlanAck, tryConversationalReply } from "../services/llm/llmOrchestrationService";
 import type { ChatAuthor, ChatTransport, InboundChatMessage } from "./types";
 
 const DOC_LIKE =
