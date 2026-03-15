@@ -1,4 +1,5 @@
 import {
+  completeTask,
   createTaskForAgentScoped,
   getAgentByIdScoped,
   listAgentMemoriesByTypeScoped,
@@ -417,6 +418,12 @@ export async function handleInboundChatMessage(input: {
   }
 
   if (!forceConversational) {
+    const interactionTask = await createTaskForAgentScoped({
+      clientId: msg.clientId,
+      agentId: agent.id,
+      taskInput: `[conversation] ${text}`,
+    }).catch(() => null);
+
     const conversational = await tryConversationalReply({
       agentName: agent.name,
       agentRole: agent.role,
@@ -425,9 +432,13 @@ export async function handleInboundChatMessage(input: {
       usageContext: {
         clientId: msg.clientId,
         agentId: agent.id,
+        ...(interactionTask?.id ? { taskId: interactionTask.id } : {}),
       },
     });
     if (conversational.type === "chat") {
+      if (interactionTask?.id) {
+        await completeTask(interactionTask.id, conversational.reply).catch(() => undefined);
+      }
       await transport.postMessage({
         conversationId: msg.conversationId,
         threadId: msg.threadId,
@@ -435,6 +446,10 @@ export async function handleInboundChatMessage(input: {
         author,
       });
       return;
+    }
+
+    if (interactionTask?.id) {
+      await completeTask(interactionTask.id, "Escalated to task flow").catch(() => undefined);
     }
   }
 
