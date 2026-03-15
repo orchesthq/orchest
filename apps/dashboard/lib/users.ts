@@ -271,19 +271,17 @@ export async function revokeUserAccessFromClient(input: {
   );
   const remainingCount = Number(remaining[0]?.count ?? "0");
   if (remainingCount <= 0) {
-    const { rows: ownedClients } = await query<{ count: string }>(
+    // Cleanly remove user if they no longer belong to any client.
+    await query(
       [
-        "select count(*)::text as count",
-        "from clients",
-        "where owner_user_id = $1",
+        "delete from users",
+        "where id = $1",
+        "and not exists (",
+        "  select 1 from client_memberships where user_id = $1",
+        ")",
       ].join("\n"),
       [input.userId]
     );
-    const ownedClientCount = Number(ownedClients[0]?.count ?? "0");
-    if (ownedClientCount <= 0) {
-      // Cleanly remove user if they no longer belong to any client.
-      await query("delete from users where id = $1", [input.userId]);
-    }
   }
 }
 
