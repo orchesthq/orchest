@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authOptions } from "@/auth";
 import { getClientIdFromSession } from "@/lib/session";
 import { createClientInvite } from "@/lib/users";
+import { EmailConfigError, sendClientInviteEmail } from "@/lib/email";
 
 const schema = z.object({
   email: z.string().email(),
@@ -27,10 +28,18 @@ export async function POST(req: Request) {
       expiresInHours: 72,
     });
 
-    const origin = new URL(req.url).origin;
+    const origin = process.env.APP_BASE_URL?.trim() || new URL(req.url).origin;
     const inviteUrl = `${origin}/invite/${encodeURIComponent(token)}`;
-    return NextResponse.json({ ok: true, inviteUrl });
+    await sendClientInviteEmail({
+      toEmail: parsed.data.email,
+      inviteUrl,
+      invitedByEmail: (session?.user as any)?.email ?? null,
+    });
+    return NextResponse.json({ ok: true });
   } catch (err) {
+    if (err instanceof EmailConfigError) {
+      return NextResponse.json({ error: err.message }, { status: 503 });
+    }
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });
   }

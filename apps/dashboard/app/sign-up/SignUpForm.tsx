@@ -8,7 +8,7 @@ export function SignUpForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
   return (
@@ -18,7 +18,7 @@ export function SignUpForm() {
         e.preventDefault();
         setLoading(true);
         setError(null);
-        setVerificationUrl(null);
+        setSent(false);
 
         const res = await fetch("/api/signup", {
           method: "POST",
@@ -33,8 +33,7 @@ export function SignUpForm() {
           return;
         }
 
-        const j = await res.json().catch(() => ({}));
-        setVerificationUrl(j?.verificationUrl ?? null);
+        setSent(true);
         setLoading(false);
       }}
     >
@@ -80,13 +79,9 @@ export function SignUpForm() {
           {error}
         </div>
       )}
-      {verificationUrl && (
+      {sent && (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Account created. Verify your email before signing in:
-          {" "}
-          <a className="underline" href={verificationUrl}>
-            Open verification link
-          </a>
+          Account created. Check your inbox and verify your email before signing in.
         </div>
       )}
 

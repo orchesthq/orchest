@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiCreateClient, apiCreateMembership } from "@/lib/internalApi";
 import { createEmailVerificationToken, createUser, getUserByEmail } from "@/lib/users";
+import { EmailConfigError, sendVerificationEmail } from "@/lib/email";
 
 const schema = z.object({
   email: z.string().email(),
@@ -44,12 +45,19 @@ export async function POST(req: Request) {
       purpose: "signup",
       expiresInHours: 24,
     });
-    const origin = new URL(req.url).origin;
+    const origin = process.env.APP_BASE_URL?.trim() || new URL(req.url).origin;
     const verificationUrl = `${origin}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+    await sendVerificationEmail({
+      toEmail: user.email,
+      verifyUrl: verificationUrl,
+    });
 
-    return NextResponse.json({ ok: true, verificationUrl });
+    return NextResponse.json({ ok: true });
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof EmailConfigError) {
+      return NextResponse.json({ error: err.message }, { status: 503 });
+    }
 
     // Common misconfig: migrations not applied yet.
     if (String(err?.code) === "42P01" || message.toLowerCase().includes("relation \"users\" does not exist")) {

@@ -7,7 +7,7 @@ export function InviteUserForm() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
 
   return (
     <form
@@ -16,7 +16,7 @@ export function InviteUserForm() {
         e.preventDefault();
         setLoading(true);
         setError(null);
-        setInviteUrl(null);
+        setSent(false);
         const res = await fetch("/api/users/invite", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -28,7 +28,7 @@ export function InviteUserForm() {
           setLoading(false);
           return;
         }
-        setInviteUrl(j?.inviteUrl ?? null);
+        setSent(true);
         setEmail("");
         setLoading(false);
       }}
@@ -52,13 +52,9 @@ export function InviteUserForm() {
         </button>
       </div>
       {error ? <div className="text-sm text-red-700">{error}</div> : null}
-      {inviteUrl ? (
+      {sent ? (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Invite link generated:
-          {" "}
-          <a href={inviteUrl} className="underline">
-            {inviteUrl}
-          </a>
+          Invite sent. Ask the user to check their inbox.
         </div>
       ) : null}
     </form>
