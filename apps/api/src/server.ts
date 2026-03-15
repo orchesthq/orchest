@@ -4,7 +4,7 @@ import { createApp } from "./app";
 import { isDbConfigured, pingDb } from "./db/client";
 
 // In local dev, load env from the API workspace (`apps/api/.env`).
-// In production, hosts (Vercel, Fly, etc.) provide env vars and this becomes a no-op.
+// In production, hosts (Vercel, AWS, etc.) provide env vars and this becomes a no-op.
 dotenv.config({
   path: process.env.DOTENV_PATH ?? path.resolve(process.cwd(), ".env"),
 });
