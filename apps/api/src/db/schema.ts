@@ -74,6 +74,12 @@ export type TokenUsageEventRow = {
   cached_prompt_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
+  input_cost_usd_micros?: number | null;
+  output_cost_usd_micros?: number | null;
+  total_cost_usd_micros?: number | null;
+  markup_multiplier_snapshot?: string | null;
+  billable_usd_micros?: number | null;
+  pricing_version?: string | null;
   provider_request_id: string | null;
   metadata: unknown;
   occurred_at: string;
@@ -98,6 +104,32 @@ export type TokenLedgerEntryRow = {
   metadata: unknown;
   created_by_user_id: string | null;
   created_at: string;
+};
+
+export type LlmPricingTokenType = "input" | "output";
+
+export type LlmPricingRateRow = {
+  id: string;
+  provider: string;
+  model: string;
+  operation: string;
+  token_type: LlmPricingTokenType;
+  usd_per_1m_tokens: string;
+  pricing_version: string;
+  effective_from: string;
+  effective_to: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClientBillingProfileRow = {
+  client_id: string;
+  markup_multiplier: string;
+  free_monthly_usd_micros: string;
+  billing_mode: "usd_credits";
+  created_at: string;
+  updated_at: string;
 };
 
 export type AgentMemoryRow = {
@@ -1212,7 +1244,10 @@ export async function insertTokenUsageEvent(input: {
       "returning",
       "  id, client_id, agent_id, task_id, provider, model, operation,",
       "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
-      "  total_tokens, provider_request_id, metadata, occurred_at, created_at",
+      "  total_tokens,",
+      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
+      "  provider_request_id, metadata, occurred_at, created_at",
     ].join("\n"),
     [
       input.clientId,
@@ -1238,7 +1273,10 @@ export async function insertTokenUsageEvent(input: {
       "select",
       "  id, client_id, agent_id, task_id, provider, model, operation,",
       "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
-      "  total_tokens, provider_request_id, metadata, occurred_at, created_at",
+      "  total_tokens,",
+      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
+      "  provider_request_id, metadata, occurred_at, created_at",
       "from token_usage_events",
       "where provider = $1 and provider_request_id = $2",
       "limit 1",
@@ -1305,6 +1343,482 @@ export async function insertTokenLedgerEntry(input: {
     [input.referenceType, input.referenceId]
   );
   return one(existing, "Failed to load token ledger entry after conflict");
+}
+
+export async function getClientBillingProfileOrDefault(clientId: string): Promise<{
+  clientId: string;
+  markupMultiplier: number;
+  freeMonthlyUsdMicros: number;
+  billingMode: "usd_credits";
+}> {
+  assertUuid(clientId, "clientId");
+  const { rows } = await query<{
+    client_id: string;
+    markup_multiplier: string;
+    free_monthly_usd_micros: string;
+    billing_mode: "usd_credits";
+  }>(
+    [
+      "select",
+      "  c.id as client_id,",
+      "  coalesce(cbp.markup_multiplier, 1.0)::text as markup_multiplier,",
+      "  coalesce(cbp.free_monthly_usd_micros, 0)::text as free_monthly_usd_micros,",
+      "  coalesce(cbp.billing_mode, 'usd_credits')::text as billing_mode",
+      "from clients c",
+      "left join client_billing_profiles cbp on cbp.client_id = c.id",
+      "where c.id = $1",
+      "limit 1",
+    ].join("\n"),
+    [clientId]
+  );
+  const row = one(rows, "Client not found");
+  return {
+    clientId: row.client_id,
+    markupMultiplier: Number(row.markup_multiplier),
+    freeMonthlyUsdMicros: Number(row.free_monthly_usd_micros),
+    billingMode: row.billing_mode,
+  };
+}
+
+export async function upsertClientBillingProfile(input: {
+  clientId: string;
+  markupMultiplier?: number;
+  freeMonthlyUsdMicros?: number;
+  billingMode?: "usd_credits";
+}): Promise<ClientBillingProfileRow> {
+  assertUuid(input.clientId, "clientId");
+  const markupMultiplier =
+    input.markupMultiplier == null ? null : Math.max(0.0001, Number(input.markupMultiplier) || 0.0001);
+  const freeMonthlyUsdMicros =
+    input.freeMonthlyUsdMicros == null ? null : Math.max(0, Math.trunc(Number(input.freeMonthlyUsdMicros) || 0));
+
+  const { rows } = await query<ClientBillingProfileRow>(
+    [
+      "insert into client_billing_profiles (client_id, markup_multiplier, free_monthly_usd_micros, billing_mode)",
+      "values ($1, coalesce($2, 1.0), coalesce($3, 0), coalesce($4, 'usd_credits'))",
+      "on conflict (client_id) do update set",
+      "  markup_multiplier = coalesce($2, client_billing_profiles.markup_multiplier),",
+      "  free_monthly_usd_micros = coalesce($3, client_billing_profiles.free_monthly_usd_micros),",
+      "  billing_mode = coalesce($4, client_billing_profiles.billing_mode),",
+      "  updated_at = now()",
+      "returning client_id, markup_multiplier::text, free_monthly_usd_micros::text, billing_mode, created_at, updated_at",
+    ].join("\n"),
+    [input.clientId, markupMultiplier, freeMonthlyUsdMicros, input.billingMode ?? null]
+  );
+  return one(rows, "Failed to upsert client billing profile");
+}
+
+export async function createLlmPricingRate(input: {
+  provider: string;
+  model: string;
+  operation: string;
+  tokenType: LlmPricingTokenType;
+  usdPer1mTokensMicros: number;
+  pricingVersion?: string;
+  effectiveFrom?: Date;
+  effectiveTo?: Date | null;
+  active?: boolean;
+}): Promise<LlmPricingRateRow> {
+  const provider = String(input.provider ?? "").trim();
+  const model = String(input.model ?? "").trim();
+  const operation = String(input.operation ?? "").trim();
+  if (!provider) throw new Error("provider is required");
+  if (!model) throw new Error("model is required");
+  if (!operation) throw new Error("operation is required");
+  const price = Math.max(0, Math.trunc(Number(input.usdPer1mTokensMicros) || 0));
+
+  const { rows } = await query<LlmPricingRateRow>(
+    [
+      "insert into llm_pricing_rates (",
+      "  provider, model, operation, token_type, usd_per_1m_tokens, pricing_version, effective_from, effective_to, active",
+      ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+      "returning",
+      "  id, provider, model, operation, token_type, usd_per_1m_tokens::text, pricing_version,",
+      "  effective_from, effective_to, active, created_at, updated_at",
+    ].join("\n"),
+    [
+      provider,
+      model,
+      operation,
+      input.tokenType,
+      price,
+      input.pricingVersion ?? "v1",
+      input.effectiveFrom?.toISOString() ?? new Date().toISOString(),
+      input.effectiveTo?.toISOString() ?? null,
+      input.active ?? true,
+    ]
+  );
+  return one(rows, "Failed to create pricing rate");
+}
+
+export async function listLlmPricingRates(input?: {
+  provider?: string;
+  model?: string;
+  operation?: string;
+  active?: boolean;
+  limit?: number;
+}): Promise<LlmPricingRateRow[]> {
+  const where: string[] = [];
+  const params: any[] = [];
+  let i = 1;
+  if (input?.provider) {
+    where.push(`provider = $${i++}`);
+    params.push(String(input.provider).trim());
+  }
+  if (input?.model) {
+    where.push(`model = $${i++}`);
+    params.push(String(input.model).trim());
+  }
+  if (input?.operation) {
+    where.push(`operation = $${i++}`);
+    params.push(String(input.operation).trim());
+  }
+  if (typeof input?.active === "boolean") {
+    where.push(`active = $${i++}`);
+    params.push(Boolean(input.active));
+  }
+  const limit = Math.min(Math.max(input?.limit ?? 100, 1), 500);
+  const { rows } = await query<LlmPricingRateRow>(
+    [
+      "select id, provider, model, operation, token_type, usd_per_1m_tokens::text, pricing_version, effective_from, effective_to, active, created_at, updated_at",
+      "from llm_pricing_rates",
+      where.length > 0 ? `where ${where.join(" and ")}` : "",
+      "order by effective_from desc, created_at desc",
+      `limit ${limit}`,
+    ].join("\n"),
+    params
+  );
+  return rows;
+}
+
+export async function resolveLlmPricingForUsage(input: {
+  provider: string;
+  model: string;
+  operation: string;
+  occurredAt?: Date;
+}): Promise<{
+  pricingVersion: string;
+  inputUsdPer1mTokensMicros: number;
+  outputUsdPer1mTokensMicros: number;
+} | null> {
+  const provider = String(input.provider ?? "").trim();
+  const model = String(input.model ?? "").trim();
+  const operation = String(input.operation ?? "").trim();
+  if (!provider || !model || !operation) return null;
+  const ts = input.occurredAt?.toISOString() ?? new Date().toISOString();
+
+  async function pickRate(tokenType: LlmPricingTokenType): Promise<LlmPricingRateRow | null> {
+    const { rows } = await query<LlmPricingRateRow>(
+      [
+        "select id, provider, model, operation, token_type, usd_per_1m_tokens::text, pricing_version, effective_from, effective_to, active, created_at, updated_at",
+        "from llm_pricing_rates",
+        "where provider = $1",
+        "  and operation = $2",
+        "  and token_type = $3",
+        "  and active = true",
+        "  and effective_from <= $4",
+        "  and (effective_to is null or effective_to > $4)",
+        "  and model in ($5, '*')",
+        "order by (model = $5) desc, effective_from desc, created_at desc",
+        "limit 1",
+      ].join("\n"),
+      [provider, operation, tokenType, ts, model]
+    );
+    return rows[0] ?? null;
+  }
+
+  const inputRate = await pickRate("input");
+  const outputRate = await pickRate("output");
+  if (!inputRate || !outputRate) return null;
+
+  const pricingVersion = outputRate.pricing_version || inputRate.pricing_version || "v1";
+  return {
+    pricingVersion,
+    inputUsdPer1mTokensMicros: Number(inputRate.usd_per_1m_tokens),
+    outputUsdPer1mTokensMicros: Number(outputRate.usd_per_1m_tokens),
+  };
+}
+
+export async function updateTokenUsageEventPricing(input: {
+  eventId: string;
+  clientId: string;
+  inputCostUsdMicros: number;
+  outputCostUsdMicros: number;
+  totalCostUsdMicros: number;
+  markupMultiplierSnapshot: number;
+  billableUsdMicros: number;
+  pricingVersion: string;
+  pricingMissing?: boolean;
+}): Promise<TokenUsageEventRow> {
+  assertUuid(input.eventId, "eventId");
+  assertUuid(input.clientId, "clientId");
+
+  const { rows } = await query<TokenUsageEventRow>(
+    [
+      "update token_usage_events",
+      "set",
+      "  input_cost_usd_micros = $3,",
+      "  output_cost_usd_micros = $4,",
+      "  total_cost_usd_micros = $5,",
+      "  markup_multiplier_snapshot = $6,",
+      "  billable_usd_micros = $7,",
+      "  pricing_version = $8,",
+      "  metadata = jsonb_set(",
+      "    coalesce(metadata, '{}'::jsonb),",
+      "    '{pricing_missing}',",
+      "    to_jsonb($9::boolean),",
+      "    true",
+      "  )",
+      "where id = $1 and client_id = $2",
+      "returning",
+      "  id, client_id, agent_id, task_id, provider, model, operation,",
+      "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
+      "  total_tokens,",
+      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
+      "  provider_request_id, metadata, occurred_at, created_at",
+    ].join("\n"),
+    [
+      input.eventId,
+      input.clientId,
+      Math.max(0, Math.trunc(input.inputCostUsdMicros)),
+      Math.max(0, Math.trunc(input.outputCostUsdMicros)),
+      Math.max(0, Math.trunc(input.totalCostUsdMicros)),
+      String(input.markupMultiplierSnapshot),
+      Math.max(0, Math.trunc(input.billableUsdMicros)),
+      input.pricingVersion || "v1",
+      Boolean(input.pricingMissing),
+    ]
+  );
+  return one(rows, "Failed to update token usage pricing");
+}
+
+export async function getBillingBalanceSummaryScoped(clientId: string): Promise<{
+  balanceUsdMicros: number;
+  monthSpendUsdMicros: number;
+  monthCreditsUsdMicros: number;
+}> {
+  assertUuid(clientId, "clientId");
+  const { rows } = await query<{ balance: string; month_spend: string; month_credits: string }>(
+    [
+      "select",
+      "  coalesce(sum(tokens), 0)::text as balance,",
+      "  coalesce(sum(case when tokens < 0 and created_at >= date_trunc('month', now()) then -tokens else 0 end), 0)::text as month_spend,",
+      "  coalesce(sum(case when tokens > 0 and created_at >= date_trunc('month', now()) then tokens else 0 end), 0)::text as month_credits",
+      "from token_ledger_entries",
+      "where client_id = $1",
+    ].join("\n"),
+    [clientId]
+  );
+  return {
+    balanceUsdMicros: Number(rows[0]?.balance ?? "0"),
+    monthSpendUsdMicros: Number(rows[0]?.month_spend ?? "0"),
+    monthCreditsUsdMicros: Number(rows[0]?.month_credits ?? "0"),
+  };
+}
+
+export async function listTokenLedgerEntriesScoped(input: {
+  clientId: string;
+  limit?: number;
+  beforeCreatedAt?: string;
+}): Promise<TokenLedgerEntryRow[]> {
+  assertUuid(input.clientId, "clientId");
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+  const before = input.beforeCreatedAt ? new Date(input.beforeCreatedAt).toISOString() : null;
+  const { rows } = await query<TokenLedgerEntryRow>(
+    [
+      "select id, client_id, entry_type, tokens, reference_type, reference_id, note, metadata, created_by_user_id, created_at",
+      "from token_ledger_entries",
+      "where client_id = $1",
+      before ? "  and created_at < $2" : "",
+      "order by created_at desc",
+      `limit ${limit}`,
+    ].join("\n"),
+    before ? [input.clientId, before] : [input.clientId]
+  );
+  return rows;
+}
+
+export async function listTokenUsageEventsScoped(input: {
+  clientId: string;
+  from?: string;
+  to?: string;
+  agentId?: string;
+  model?: string;
+  provider?: string;
+  operation?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<TokenUsageEventRow[]> {
+  assertUuid(input.clientId, "clientId");
+  if (input.agentId) assertUuid(input.agentId, "agentId");
+  const where: string[] = ["client_id = $1"];
+  const params: any[] = [input.clientId];
+  let i = 2;
+  if (input.from) {
+    where.push(`occurred_at >= $${i++}`);
+    params.push(new Date(input.from).toISOString());
+  }
+  if (input.to) {
+    where.push(`occurred_at <= $${i++}`);
+    params.push(new Date(input.to).toISOString());
+  }
+  if (input.agentId) {
+    where.push(`agent_id = $${i++}`);
+    params.push(input.agentId);
+  }
+  if (input.model) {
+    where.push(`model = $${i++}`);
+    params.push(input.model);
+  }
+  if (input.provider) {
+    where.push(`provider = $${i++}`);
+    params.push(input.provider);
+  }
+  if (input.operation) {
+    where.push(`operation = $${i++}`);
+    params.push(input.operation);
+  }
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+  const offset = Math.max(input.offset ?? 0, 0);
+  const { rows } = await query<TokenUsageEventRow>(
+    [
+      "select",
+      "  id, client_id, agent_id, task_id, provider, model, operation,",
+      "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
+      "  total_tokens,",
+      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
+      "  provider_request_id, metadata, occurred_at, created_at",
+      "from token_usage_events",
+      `where ${where.join(" and ")}`,
+      "order by occurred_at desc, created_at desc",
+      `limit ${limit}`,
+      `offset ${offset}`,
+    ].join("\n"),
+    params
+  );
+  return rows;
+}
+
+export async function getTokenUsageSummaryScoped(input: {
+  clientId: string;
+  from?: string;
+  to?: string;
+  agentId?: string;
+  model?: string;
+  provider?: string;
+  operation?: string;
+  groupBy?: "day" | "model" | "agent" | "operation";
+}): Promise<{
+  totals: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    billableUsdMicros: number;
+  };
+  groups: Array<{
+    key: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    billableUsdMicros: number;
+  }>;
+}> {
+  assertUuid(input.clientId, "clientId");
+  if (input.agentId) assertUuid(input.agentId, "agentId");
+  const where: string[] = ["client_id = $1"];
+  const params: any[] = [input.clientId];
+  let i = 2;
+  if (input.from) {
+    where.push(`occurred_at >= $${i++}`);
+    params.push(new Date(input.from).toISOString());
+  }
+  if (input.to) {
+    where.push(`occurred_at <= $${i++}`);
+    params.push(new Date(input.to).toISOString());
+  }
+  if (input.agentId) {
+    where.push(`agent_id = $${i++}`);
+    params.push(input.agentId);
+  }
+  if (input.model) {
+    where.push(`model = $${i++}`);
+    params.push(input.model);
+  }
+  if (input.provider) {
+    where.push(`provider = $${i++}`);
+    params.push(input.provider);
+  }
+  if (input.operation) {
+    where.push(`operation = $${i++}`);
+    params.push(input.operation);
+  }
+
+  const groupExpr =
+    input.groupBy === "day"
+      ? "to_char(date_trunc('day', occurred_at), 'YYYY-MM-DD')"
+      : input.groupBy === "agent"
+        ? "coalesce(agent_id::text, 'none')"
+        : input.groupBy === "operation"
+          ? "operation"
+          : "model";
+
+  const { rows: totalsRows } = await query<{
+    prompt_tokens: string;
+    completion_tokens: string;
+    total_tokens: string;
+    billable_usd_micros: string;
+  }>(
+    [
+      "select",
+      "  coalesce(sum(prompt_tokens), 0)::text as prompt_tokens,",
+      "  coalesce(sum(completion_tokens), 0)::text as completion_tokens,",
+      "  coalesce(sum(total_tokens), 0)::text as total_tokens,",
+      "  coalesce(sum(billable_usd_micros), 0)::text as billable_usd_micros",
+      "from token_usage_events",
+      `where ${where.join(" and ")}`,
+    ].join("\n"),
+    params
+  );
+
+  const { rows: groupRows } = await query<{
+    group_key: string;
+    prompt_tokens: string;
+    completion_tokens: string;
+    total_tokens: string;
+    billable_usd_micros: string;
+  }>(
+    [
+      `select ${groupExpr} as group_key,`,
+      "  coalesce(sum(prompt_tokens), 0)::text as prompt_tokens,",
+      "  coalesce(sum(completion_tokens), 0)::text as completion_tokens,",
+      "  coalesce(sum(total_tokens), 0)::text as total_tokens,",
+      "  coalesce(sum(billable_usd_micros), 0)::text as billable_usd_micros",
+      "from token_usage_events",
+      `where ${where.join(" and ")}`,
+      "group by group_key",
+      "order by group_key asc",
+    ].join("\n"),
+    params
+  );
+
+  const t = totalsRows[0];
+  return {
+    totals: {
+      promptTokens: Number(t?.prompt_tokens ?? "0"),
+      completionTokens: Number(t?.completion_tokens ?? "0"),
+      totalTokens: Number(t?.total_tokens ?? "0"),
+      billableUsdMicros: Number(t?.billable_usd_micros ?? "0"),
+    },
+    groups: groupRows.map((r) => ({
+      key: r.group_key,
+      promptTokens: Number(r.prompt_tokens),
+      completionTokens: Number(r.completion_tokens),
+      totalTokens: Number(r.total_tokens),
+      billableUsdMicros: Number(r.billable_usd_micros),
+    })),
+  };
 }
 
 export async function listAgentMemoriesScoped(input: {

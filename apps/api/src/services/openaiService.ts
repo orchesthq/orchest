@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { isDbConfigured } from "../db/client";
-import { getPartnerSetting, insertTokenLedgerEntry, insertTokenUsageEvent } from "../db/schema";
+import {
+  getClientBillingProfileOrDefault,
+  getPartnerSetting,
+  insertTokenLedgerEntry,
+  insertTokenUsageEvent,
+  resolveLlmPricingForUsage,
+  updateTokenUsageEventPricing,
+} from "../db/schema";
 
 export type MemoryForPrompt = {
   memory_type: "profile" | "episodic" | "semantic";
@@ -763,18 +770,53 @@ async function persistUsageEvent(input: {
         finishReason: input.response?.choices?.[0]?.finish_reason ?? null,
       },
     });
-    const debitTokens = -Math.max(0, Number(usageEvent.total_tokens) || 0);
-    if (debitTokens !== 0) {
+
+    const billing = await getClientBillingProfileOrDefault(ctx.clientId);
+    const pricing = await resolveLlmPricingForUsage({
+      provider: usageEvent.provider,
+      model: usageEvent.model,
+      operation: usageEvent.operation,
+      occurredAt: new Date(usageEvent.occurred_at),
+    });
+
+    const inputCostUsdMicros = pricing
+      ? microsFromTokens(pricing.inputUsdPer1mTokensMicros, usageEvent.prompt_tokens)
+      : 0;
+    const outputCostUsdMicros = pricing
+      ? microsFromTokens(pricing.outputUsdPer1mTokensMicros, usageEvent.completion_tokens)
+      : 0;
+    const totalCostUsdMicros = inputCostUsdMicros + outputCostUsdMicros;
+    const billableUsdMicros = Math.max(
+      0,
+      Math.round(totalCostUsdMicros * Math.max(0, Number(billing.markupMultiplier) || 1))
+    );
+
+    await updateTokenUsageEventPricing({
+      eventId: usageEvent.id,
+      clientId: ctx.clientId,
+      inputCostUsdMicros,
+      outputCostUsdMicros,
+      totalCostUsdMicros,
+      markupMultiplierSnapshot: billing.markupMultiplier,
+      billableUsdMicros,
+      pricingVersion: pricing?.pricingVersion ?? "unpriced",
+      pricingMissing: !pricing,
+    });
+
+    if (billableUsdMicros > 0) {
       await insertTokenLedgerEntry({
         clientId: ctx.clientId,
         entryType: "usage_debit",
-        tokens: debitTokens,
+        tokens: -billableUsdMicros,
         referenceType: "token_usage_event",
         referenceId: usageEvent.id,
         metadata: {
           provider: usageEvent.provider,
           model: usageEvent.model,
           operation: usageEvent.operation,
+          totalTokens: usageEvent.total_tokens,
+          billableUsdMicros,
+          pricingVersion: pricing?.pricingVersion ?? "unpriced",
         },
       });
     }
@@ -787,6 +829,13 @@ function toNonNegativeInt(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.floor(n);
+}
+
+function microsFromTokens(usdPer1mTokensMicros: number, tokens: number): number {
+  const priceMicros = Math.max(0, Number(usdPer1mTokensMicros) || 0);
+  const count = Math.max(0, Number(tokens) || 0);
+  if (priceMicros === 0 || count === 0) return 0;
+  return Math.round((priceMicros * count) / 1_000_000);
 }
 
 function withUsageContext(

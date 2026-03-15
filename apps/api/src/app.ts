@@ -8,6 +8,10 @@ import { githubInternalRoutes } from "./routes/githubInternalRoutes";
 import { kbInternalRoutes } from "./routes/kbInternalRoutes";
 import { slackEventsHandler, slackPublicRoutes } from "./routes/slackPublicRoutes";
 import { githubWebhookRoutes } from "./routes/githubWebhookRoutes";
+import { billingRoutes } from "./routes/billingRoutes";
+import { usageRoutes } from "./routes/usageRoutes";
+import { adminBillingRoutes } from "./routes/adminBillingRoutes";
+import { adminPricingRoutes } from "./routes/adminPricingRoutes";
 import { DbNotConfiguredError, isDbConfigured } from "./db/client";
 import { InternalAuthNotConfiguredError, requireInternalServiceAuth } from "./middleware/internalAuth";
 
@@ -39,6 +43,10 @@ export function createApp() {
   // API (requires a client context)
   app.use("/agents", requireClientId, agentRoutes);
   app.use("/tasks", requireClientId, taskRoutes);
+  app.use("/billing", requireClientId, billingRoutes);
+  app.use("/usage", requireClientId, usageRoutes);
+  app.use("/admin/billing", requireInternalServiceAuth, requireClientId, adminBillingRoutes);
+  app.use("/admin/pricing", requireInternalServiceAuth, adminPricingRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

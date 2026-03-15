@@ -28,6 +28,18 @@ export default async function DashboardHome() {
           >
             Agents
           </Link>
+          <Link
+            href="/app/usage"
+            className="ml-3 inline-flex items-center rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            Usage
+          </Link>
+          <Link
+            href="/app/billing"
+            className="ml-3 inline-flex items-center rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            Billing
+          </Link>
         </div>
       </div>
     </div>
