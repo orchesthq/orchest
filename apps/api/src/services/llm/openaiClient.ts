@@ -97,26 +97,12 @@ export class OpenAiClient extends LlmClient {
         ? usageContext.model.trim()
         : null;
     const model = modelFromBody ?? modelFromContext ?? this.defaultModel;
-    const url = `${this.baseUrl}/chat/completions`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ temperature: 0.2, ...body, model }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`OpenAI-compatible API error: ${res.status} ${res.statusText} ${text}`);
-    }
-
-    const json = (await res.json()) as any;
+    const payload: any = { ...(body ?? {}), model };
+    const json = await this.chatCompletionWithRetries(payload);
     await persistLlmUsageAndBilling({
       provider: this.provider,
       operation: usageContext?.operation ?? "chat.completion",
-      requestBody: body,
+      requestBody: payload,
       responseBody: json,
       usageContext,
     });
@@ -155,6 +141,56 @@ export class OpenAiClient extends LlmClient {
     });
     return json;
   }
+
+  private async chatCompletionWithRetries(payload: any): Promise<any> {
+    const url = `${this.baseUrl}/chat/completions`;
+    const headers = {
+      Authorization: `Bearer ${this.apiKey}`,
+      "Content-Type": "application/json",
+    };
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        return (await res.json()) as any;
+      }
+
+      const text = await res.text().catch(() => "");
+      const lc = text.toLowerCase();
+      const modelInUse = String(payload?.model ?? "");
+
+      if (attempt === 0 && payload?.temperature != null && isUnsupportedTemperatureError(lc)) {
+        delete payload.temperature;
+        console.warn("[openai] retrying chat completion without temperature", { model: modelInUse });
+        continue;
+      }
+
+      if (attempt <= 1 && isNotChatModelError(lc)) {
+        const fallback = deriveChatFallbackModel(modelInUse);
+        if (fallback && fallback !== modelInUse) {
+          payload.model = fallback;
+          console.warn("[openai] model is not chat-compatible; retrying with fallback", {
+            selectedModel: modelInUse,
+            fallbackModel: fallback,
+          });
+          continue;
+        }
+      }
+
+      lastError = new Error(`OpenAI-compatible API error: ${res.status} ${res.statusText} ${text}`);
+      break;
+    }
+
+    throw (
+      lastError ??
+      new Error("OpenAI-compatible API error: failed to complete chat request after retry attempts")
+    );
+  }
 }
 
 export class InsufficientBalanceError extends Error {
@@ -162,6 +198,26 @@ export class InsufficientBalanceError extends Error {
     super(message);
     this.name = "InsufficientBalanceError";
   }
+}
+
+function isUnsupportedTemperatureError(messageLower: string): boolean {
+  return messageLower.includes("temperature") && messageLower.includes("unsupported value");
+}
+
+function isNotChatModelError(messageLower: string): boolean {
+  return messageLower.includes("not a chat model") || messageLower.includes("not supported in the v1/chat/completions endpoint");
+}
+
+function deriveChatFallbackModel(model: string): string | null {
+  const raw = String(model ?? "").trim();
+  if (!raw) return null;
+  if (raw.endsWith("-chat-latest")) return raw;
+
+  const codexIdx = raw.indexOf("-codex");
+  if (codexIdx > 0) {
+    return `${raw.slice(0, codexIdx)}-chat-latest`;
+  }
+  return null;
 }
 
 export async function createOpenAiClient(): Promise<OpenAiClient | null> {
