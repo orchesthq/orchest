@@ -1,14 +1,45 @@
 # Orchest Roadmap
 
+## Recently completed
+
+### Billing and usage foundations
+
+- Added immutable usage event tracking and USD ledger foundations.
+- Implemented pricing/rate-card based billing with cached-input token pricing support.
+- Added wildcard/prefix pricing matching for model/version patterns.
+- Added budget enforcement: block LLM calls when client balance is depleted.
+- Added usage and billing dashboard screens with filters, summaries, and task-level usage audit.
+
+### LLM architecture and model management
+
+- Split legacy OpenAI service into modular layers (provider client, orchestration, billing).
+- Added per-agent model selection backed by DB (`llm_model_catalog` + `agents.llm_*`).
+- Added compatibility retries for OpenAI-compatible chat calls (temperature fallback and model fallback).
+
+### User management and onboarding
+
+- Added workspace user management screen (`/app/users`) with invites and member listing.
+- Added invite acceptance flow and email verification flow.
+- Integrated Resend for signup verification and invite emails.
+- Added revoke actions for active users and pending invites.
+- Added invite guardrails (no duplicate active invite; no invite if email is already active in another client).
+
+---
+
 ## Next session priorities
 
-### Dashboard
+### Access and security
 
-- Add account onboarding flow.
-- Add user management capabilities.
-- Add usage controls and monitoring:
-  - Track token usage per client and per agent.
-  - Enforce configurable usage limits/budgets.
+- Add role-based permissions (owner/admin/member).
+- Prevent revoking the final remaining user in a client workspace.
+- Add audit log for user lifecycle actions (invite sent/accepted/revoked, membership revoked).
+
+### Billing productization
+
+- Add client self-serve top-up flow with payment provider (Stripe).
+- Add invoice history and downloadable billing statements.
+- Introduce a balance projection/snapshot table for large-ledger performance.
+- Add pricing/routing capability metadata per model (endpoint compatibility, tool support).
 
 ### Agent
 

@@ -31,11 +31,22 @@ npm install
    - `migrations/011_github_agent_multi_repo.sql`
    - `migrations/012_company_kb.sql`
    - `migrations/013_kb_chunk_metadata.sql`
+   - `migrations/014_token_usage_events.sql`
+   - `migrations/015_usd_billing_foundations.sql`
+   - `migrations/016_cached_input_pricing.sql`
+   - `migrations/017_monthly_budget_profile.sql`
+   - `migrations/018_llm_model_catalog.sql`
+   - `migrations/019_agent_llm_model.sql`
+   - `migrations/020_user_invites_and_verification.sql`
 
 4. Create dashboard env:
    - Copy `apps/dashboard/.env.local.example` → `apps/dashboard/.env.local`
    - Make sure `DATABASE_URL` matches `apps/api/.env`
    - `INTERNAL_SERVICE_SECRET` must match between dashboard + API
+   - Add Resend settings for verification/invite emails:
+     - `RESEND_API_KEY`
+     - `EMAIL_FROM` (e.g. `Orchest <noreply@orchesthq.com>`)
+     - `APP_BASE_URL` (e.g. `http://localhost:3001`)
 
 5. Run dev:
 
@@ -52,8 +63,9 @@ This starts:
 1. Open `http://localhost:3001`
 2. Click **Create account**
 3. Enter company name + email/password
-4. You should land on `/app`, then **View agents**
-5. Create a new agent and edit its name/personality
+4. Check your inbox and open the verification email
+5. Sign in, you should land on `/app`, then **View agents**
+6. Create a new agent and edit its name/personality
 
 ## Hosting (recommended)
 
@@ -67,6 +79,9 @@ This starts:
    - `DATABASE_URL` (same Supabase Postgres URL)
    - `API_BASE_URL` (your Fly API URL, e.g. `https://<app>.fly.dev`)
    - `INTERNAL_SERVICE_SECRET` (must match the API’s value)
+   - `RESEND_API_KEY` (from Resend)
+   - `EMAIL_FROM` (e.g. `Orchest <noreply@orchesthq.com>`)
+   - `APP_BASE_URL` (same as your dashboard URL)
 4. Deploy.
 
 ### API (Fly.io)
@@ -212,6 +227,62 @@ on conflict (partner, key) do update set settings = excluded.settings, updated_a
 - **Link to GitHub** – set commit author name/email for this agent
 
 See [docs/GITHUB_INTEGRATION_DESIGN.md](./docs/GITHUB_INTEGRATION_DESIGN.md) for full design.
+
+## Email delivery (Resend)
+
+Dashboard onboarding and user invites send emails via Resend:
+
+- Signup verification email
+- Client user invite email
+
+### 1) Configure Resend
+
+1. Create a Resend account.
+2. Add and verify your sending domain (e.g. `orchesthq.com`).
+3. Configure required DNS records (SPF/DKIM) in your DNS provider.
+4. Create an API key.
+
+### 2) Configure dashboard env
+
+Set these variables in `apps/dashboard/.env.local` (dev) and Vercel env (prod):
+
+- `RESEND_API_KEY=<your_key>`
+- `EMAIL_FROM=Orchest <noreply@orchesthq.com>`
+- `APP_BASE_URL=<public_dashboard_url>`
+
+If these are missing, signup/invite endpoints return an email configuration error instead of exposing links in the UI.
+
+## Billing and usage (current MVP)
+
+- Usage events are persisted per provider call in `token_usage_events`.
+- USD micros billing is computed from `llm_pricing_rates` and written back to each usage row.
+- Ledger-based balance is tracked in `token_ledger_entries` (credits/debits).
+- Budget enforcement is active: when client balance is `<= 0`, LLM requests are blocked with a top-up message.
+- Dashboard includes:
+  - `/app/usage` (filters, daily chart, per-task usage table)
+  - `/app/billing` (balance, monthly spend, budget usage percent)
+
+## Model management (current MVP)
+
+- LLM model catalog is stored in DB: `llm_model_catalog`.
+- Each agent has its own model selection (`agents.llm_provider`, `agents.llm_model`).
+- Runtime uses the agent-selected model for orchestration and task execution.
+- OpenAI-compatible chat calls include resilience for model/parameter incompatibilities:
+  - retries without `temperature` when unsupported
+  - retries with chat fallback for non-chat model variants where possible
+
+## User management and onboarding verification (current MVP)
+
+- `/app/users` supports:
+  - list active users for the client
+  - invite new users by email
+  - revoke active user access
+  - revoke pending invites
+- Invite safeguards:
+  - blocks inviting an email already active in another client
+  - blocks duplicate active invites for the same email/client
+- Email verification is required for sign-in.
+- Signup and invites send email via Resend (no raw links shown in UI).
 
 ## Roadmap
 
