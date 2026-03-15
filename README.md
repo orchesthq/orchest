@@ -77,22 +77,102 @@ This starts:
    - `NEXTAUTH_URL` (your Vercel dashboard URL)
    - `NEXTAUTH_SECRET`
    - `DATABASE_URL` (same Supabase Postgres URL)
-   - `API_BASE_URL` (your Fly API URL, e.g. `https://<app>.fly.dev`)
+  - `API_BASE_URL` (your API URL, e.g. `https://api.orchesthq.com`)
    - `INTERNAL_SERVICE_SECRET` (must match the API’s value)
    - `RESEND_API_KEY` (from Resend)
    - `EMAIL_FROM` (e.g. `Orchest <noreply@orchesthq.com>`)
    - `APP_BASE_URL` (same as your dashboard URL)
 4. Deploy.
 
-### API (Fly.io)
+### API (AWS EC2 + PM2 + Nginx)
 
-1. Create a Fly.io account and install `flyctl`.
-2. From `apps/api`, run:
-   - `fly launch` (Fly will detect `Dockerfile`)
-3. Set secrets:
-   - `fly secrets set DATABASE_URL=... INTERNAL_SERVICE_SECRET=...`
-4. Deploy:
-   - `fly deploy`
+Use PM2 to run the Node process, and Nginx to terminate TLS and reverse proxy to `127.0.0.1:3000`.
+
+#### First-time setup (on EC2)
+
+1. Install dependencies and build API:
+
+```bash
+cd ~/orchest/apps/api
+npm ci
+npm run build
+```
+
+2. Start API with PM2 and persist across reboot:
+
+```bash
+cd ~/orchest/apps/api
+pm2 start "npm run start" --name orchest-api
+pm2 save
+pm2 startup
+```
+
+3. Configure Nginx to proxy `api.orchesthq.com` to `127.0.0.1:3000`.
+
+```nginx
+server {
+    listen 80;
+    server_name api.orchesthq.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+4. Validate and reload Nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. Issue TLS certificate (Let's Encrypt):
+
+```bash
+sudo certbot --nginx -d api.orchesthq.com --redirect -m <your-email> --agree-tos --no-eff-email
+```
+
+6. AWS Security Group inbound should allow:
+   - `22` (SSH)
+   - `80` (HTTP)
+   - `443` (HTTPS)
+
+#### Redeploy API (new commits)
+
+```bash
+cd ~/orchest/apps/api
+git pull origin main
+npm ci
+npm run build
+pm2 restart orchest-api --update-env
+curl -fsS http://127.0.0.1:3000/health
+```
+
+#### Logs and health checks
+
+```bash
+# API logs
+pm2 logs orchest-api --lines 200
+
+# API process state
+pm2 status
+pm2 describe orchest-api
+
+# Nginx logs
+sudo tail -f /var/log/nginx/access.log
+sudo tail -f /var/log/nginx/error.log
+
+# Local health check (from EC2)
+curl -i http://127.0.0.1:3000/health
+
+# Public health check
+curl -i https://api.orchesthq.com/health
+```
 
 ## Slack integration (5 apps / 5 bots)
 
@@ -103,7 +183,7 @@ Each bot is a separate Slack app, but they all point to the **same Orchest API e
 
 - Create one Slack app per bot in your workspace (from `api.slack.com/apps`).
 - Enable **OAuth & Permissions** and set the redirect URL:
-  - `https://<your-fly-app>.fly.dev/integrations/slack/callback`
+  - `https://<your-api-domain>/integrations/slack/callback`
 - Add **Bot Token Scopes**:
   - `chat:write`
   - `chat:write.customize`
@@ -118,7 +198,7 @@ Each bot is a separate Slack app, but they all point to the **same Orchest API e
 
 - Enable **Event Subscriptions**
 - Set Request URL:
-  - `https://<your-fly-app>.fly.dev/integrations/slack/events`
+  - `https://<your-api-domain>/integrations/slack/events`
 - Subscribe to bot events:
   - `app_mention`
   - `message.im`
@@ -140,9 +220,9 @@ features:
 
 Without this, users see "Sending messages to this app has been turned off" and cannot DM the bot.
 
-### 4) Set API env vars (Fly secrets)
+### 4) Set API env vars
 
-Set these on your Fly API app:
+Set these on your API runtime environment:
 - `SLACK_REDIRECT_URI` (must match the redirect URL configured in Slack)
 - `DASHBOARD_BASE_URL` (your Vercel dashboard URL)
 
