@@ -164,7 +164,7 @@ export class OpenAiClient extends LlmClient {
       const lc = text.toLowerCase();
       const modelInUse = String(payload?.model ?? "");
 
-      if (attempt === 0 && payload?.temperature != null && isUnsupportedTemperatureError(lc)) {
+      if (payload?.temperature != null && isUnsupportedTemperatureError(lc)) {
         delete payload.temperature;
         console.warn("[openai] retrying chat completion without temperature", { model: modelInUse });
         continue;
