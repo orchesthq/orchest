@@ -39,7 +39,7 @@ router.post("/rates", async (req, res, next) => {
         provider: z.string().min(1),
         model: z.string().min(1),
         operation: z.string().min(1),
-        tokenType: z.enum(["input", "output"]),
+        tokenType: z.enum(["input", "cached_input", "output"]),
         usdPer1mTokensMicros: z.coerce.number().int().min(0),
         pricingVersion: z.string().min(1).optional(),
         effectiveFrom: z.string().datetime().optional(),

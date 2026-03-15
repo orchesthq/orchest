@@ -75,6 +75,7 @@ export type TokenUsageEventRow = {
   reasoning_tokens: number;
   total_tokens: number;
   input_cost_usd_micros?: number | null;
+  cached_input_cost_usd_micros?: number | null;
   output_cost_usd_micros?: number | null;
   total_cost_usd_micros?: number | null;
   markup_multiplier_snapshot?: string | null;
@@ -106,7 +107,7 @@ export type TokenLedgerEntryRow = {
   created_at: string;
 };
 
-export type LlmPricingTokenType = "input" | "output";
+export type LlmPricingTokenType = "input" | "cached_input" | "output";
 
 export type LlmPricingRateRow = {
   id: string;
@@ -1245,7 +1246,7 @@ export async function insertTokenUsageEvent(input: {
       "  id, client_id, agent_id, task_id, provider, model, operation,",
       "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
       "  total_tokens,",
-      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  input_cost_usd_micros, cached_input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
       "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
       "  provider_request_id, metadata, occurred_at, created_at",
     ].join("\n"),
@@ -1274,7 +1275,7 @@ export async function insertTokenUsageEvent(input: {
       "  id, client_id, agent_id, task_id, provider, model, operation,",
       "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
       "  total_tokens,",
-      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  input_cost_usd_micros, cached_input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
       "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
       "  provider_request_id, metadata, occurred_at, created_at",
       "from token_usage_events",
@@ -1499,6 +1500,7 @@ export async function resolveLlmPricingForUsage(input: {
 }): Promise<{
   pricingVersion: string;
   inputUsdPer1mTokensMicros: number;
+  cachedInputUsdPer1mTokensMicros: number;
   outputUsdPer1mTokensMicros: number;
 } | null> {
   const provider = String(input.provider ?? "").trim();
@@ -1528,13 +1530,18 @@ export async function resolveLlmPricingForUsage(input: {
   }
 
   const inputRate = await pickRate("input");
+  const cachedInputRate = await pickRate("cached_input");
   const outputRate = await pickRate("output");
   if (!inputRate || !outputRate) return null;
 
-  const pricingVersion = outputRate.pricing_version || inputRate.pricing_version || "v1";
+  const pricingVersion =
+    outputRate.pricing_version || inputRate.pricing_version || cachedInputRate?.pricing_version || "v1";
   return {
     pricingVersion,
     inputUsdPer1mTokensMicros: Number(inputRate.usd_per_1m_tokens),
+    cachedInputUsdPer1mTokensMicros: Number(
+      (cachedInputRate ?? inputRate).usd_per_1m_tokens
+    ),
     outputUsdPer1mTokensMicros: Number(outputRate.usd_per_1m_tokens),
   };
 }
@@ -1543,6 +1550,7 @@ export async function updateTokenUsageEventPricing(input: {
   eventId: string;
   clientId: string;
   inputCostUsdMicros: number;
+  cachedInputCostUsdMicros: number;
   outputCostUsdMicros: number;
   totalCostUsdMicros: number;
   markupMultiplierSnapshot: number;
@@ -1558,15 +1566,16 @@ export async function updateTokenUsageEventPricing(input: {
       "update token_usage_events",
       "set",
       "  input_cost_usd_micros = $3,",
-      "  output_cost_usd_micros = $4,",
-      "  total_cost_usd_micros = $5,",
-      "  markup_multiplier_snapshot = $6,",
-      "  billable_usd_micros = $7,",
-      "  pricing_version = $8,",
+      "  cached_input_cost_usd_micros = $4,",
+      "  output_cost_usd_micros = $5,",
+      "  total_cost_usd_micros = $6,",
+      "  markup_multiplier_snapshot = $7,",
+      "  billable_usd_micros = $8,",
+      "  pricing_version = $9,",
       "  metadata = jsonb_set(",
       "    coalesce(metadata, '{}'::jsonb),",
       "    '{pricing_missing}',",
-      "    to_jsonb($9::boolean),",
+      "    to_jsonb($10::boolean),",
       "    true",
       "  )",
       "where id = $1 and client_id = $2",
@@ -1574,7 +1583,7 @@ export async function updateTokenUsageEventPricing(input: {
       "  id, client_id, agent_id, task_id, provider, model, operation,",
       "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
       "  total_tokens,",
-      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  input_cost_usd_micros, cached_input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
       "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
       "  provider_request_id, metadata, occurred_at, created_at",
     ].join("\n"),
@@ -1582,6 +1591,7 @@ export async function updateTokenUsageEventPricing(input: {
       input.eventId,
       input.clientId,
       Math.max(0, Math.trunc(input.inputCostUsdMicros)),
+      Math.max(0, Math.trunc(input.cachedInputCostUsdMicros)),
       Math.max(0, Math.trunc(input.outputCostUsdMicros)),
       Math.max(0, Math.trunc(input.totalCostUsdMicros)),
       String(input.markupMultiplierSnapshot),
@@ -1687,7 +1697,7 @@ export async function listTokenUsageEventsScoped(input: {
       "  id, client_id, agent_id, task_id, provider, model, operation,",
       "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
       "  total_tokens,",
-      "  input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
+      "  input_cost_usd_micros, cached_input_cost_usd_micros, output_cost_usd_micros, total_cost_usd_micros,",
       "  markup_multiplier_snapshot, billable_usd_micros, pricing_version,",
       "  provider_request_id, metadata, occurred_at, created_at",
       "from token_usage_events",

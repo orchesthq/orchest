@@ -69,13 +69,25 @@ export async function persistLlmUsageAndBilling(input: {
       occurredAt: new Date(usageEvent.occurred_at),
     });
 
+    const cachedPromptTokensForPricing = Math.min(
+      Math.max(0, Number(usageEvent.cached_prompt_tokens) || 0),
+      Math.max(0, Number(usageEvent.prompt_tokens) || 0)
+    );
+    const nonCachedPromptTokens = Math.max(
+      0,
+      (Number(usageEvent.prompt_tokens) || 0) - cachedPromptTokensForPricing
+    );
+
     const inputCostUsdMicros = pricing
-      ? microsFromTokens(pricing.inputUsdPer1mTokensMicros, usageEvent.prompt_tokens)
+      ? microsFromTokens(pricing.inputUsdPer1mTokensMicros, nonCachedPromptTokens)
+      : 0;
+    const cachedInputCostUsdMicros = pricing
+      ? microsFromTokens(pricing.cachedInputUsdPer1mTokensMicros, cachedPromptTokensForPricing)
       : 0;
     const outputCostUsdMicros = pricing
       ? microsFromTokens(pricing.outputUsdPer1mTokensMicros, usageEvent.completion_tokens)
       : 0;
-    const totalCostUsdMicros = inputCostUsdMicros + outputCostUsdMicros;
+    const totalCostUsdMicros = inputCostUsdMicros + cachedInputCostUsdMicros + outputCostUsdMicros;
     const billableUsdMicros = Math.max(
       0,
       Math.round(totalCostUsdMicros * Math.max(0, Number(billing.markupMultiplier) || 1))
@@ -85,6 +97,7 @@ export async function persistLlmUsageAndBilling(input: {
       eventId: usageEvent.id,
       clientId: ctx.clientId,
       inputCostUsdMicros,
+      cachedInputCostUsdMicros,
       outputCostUsdMicros,
       totalCostUsdMicros,
       markupMultiplierSnapshot: billing.markupMultiplier,
