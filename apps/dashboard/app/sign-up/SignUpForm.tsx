@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { InlineSpinner } from "@/components/InlineSpinner";
 
 export function SignUpForm() {
@@ -9,6 +8,7 @@ export function SignUpForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   return (
@@ -18,6 +18,7 @@ export function SignUpForm() {
         e.preventDefault();
         setLoading(true);
         setError(null);
+        setVerificationUrl(null);
 
         const res = await fetch("/api/signup", {
           method: "POST",
@@ -32,13 +33,8 @@ export function SignUpForm() {
           return;
         }
 
-        await signIn("credentials", {
-          email,
-          password,
-          redirect: true,
-          callbackUrl: "/app",
-        });
-
+        const j = await res.json().catch(() => ({}));
+        setVerificationUrl(j?.verificationUrl ?? null);
         setLoading(false);
       }}
     >
@@ -82,6 +78,15 @@ export function SignUpForm() {
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </div>
+      )}
+      {verificationUrl && (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Account created. Verify your email before signing in:
+          {" "}
+          <a className="underline" href={verificationUrl}>
+            Open verification link
+          </a>
         </div>
       )}
 

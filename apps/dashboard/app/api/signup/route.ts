@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiCreateClient, apiCreateMembership } from "@/lib/internalApi";
-import { createUser, getUserByEmail } from "@/lib/users";
+import { createEmailVerificationToken, createUser, getUserByEmail } from "@/lib/users";
 
 const schema = z.object({
   email: z.string().email(),
@@ -38,7 +38,16 @@ export async function POST(req: Request) {
       role: "owner",
     });
 
-    return NextResponse.json({ ok: true });
+    const verificationToken = await createEmailVerificationToken({
+      userId: user.id,
+      email: user.email,
+      purpose: "signup",
+      expiresInHours: 24,
+    });
+    const origin = new URL(req.url).origin;
+    const verificationUrl = `${origin}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+
+    return NextResponse.json({ ok: true, verificationUrl });
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
 

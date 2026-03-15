@@ -40,6 +40,12 @@ export default async function DashboardHome() {
           >
             Billing
           </Link>
+          <Link
+            href="/app/users"
+            className="ml-3 inline-flex items-center rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            Users
+          </Link>
         </div>
       </div>
     </div>

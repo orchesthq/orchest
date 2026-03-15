@@ -28,6 +28,7 @@ export const authOptions: NextAuthOptions = {
 
           const user = await getUserByEmail(parsed.data.email);
           if (!user) return null;
+          if (!user.email_verified_at) return null;
 
           const ok = await verifyPassword({
             password: parsed.data.password,

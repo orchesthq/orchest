@@ -28,6 +28,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/app/billing" className="text-sm text-zinc-600 hover:text-zinc-900">
               Billing
             </Link>
+            <Link href="/app/users" className="text-sm text-zinc-600 hover:text-zinc-900">
+              Users
+            </Link>
             <Link href="/app/integrations/github" className="text-sm text-zinc-600 hover:text-zinc-900">
               Integrations
             </Link>
