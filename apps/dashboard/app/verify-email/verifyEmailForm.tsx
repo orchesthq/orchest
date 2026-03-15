@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { InlineSpinner } from "@/components/InlineSpinner";
+import { authBtnCls, AuthError, AuthSuccess } from "@/components/AuthCard";
 
 export function VerifyEmailForm({ token }: { token: string }) {
   const [loading, setLoading] = useState(false);
@@ -10,38 +11,38 @@ export function VerifyEmailForm({ token }: { token: string }) {
 
   return (
     <form
-      className="mt-6 space-y-3"
+      className="space-y-4"
       onSubmit={async (e) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
         setOk(null);
+
         const res = await fetch("/api/verify-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token }),
         });
         const j = await res.json().catch(() => ({}));
+
         if (!res.ok) {
           setError(j?.error ?? "Verification failed");
           setLoading(false);
           return;
         }
-        setOk(`Verified ${j?.email ?? "email"} successfully. You can now sign in.`);
+
+        setOk(`${j?.email ?? "Email"} verified — you can now sign in.`);
         setLoading(false);
       }}
     >
-      <button
-        type="submit"
-        disabled={loading || !token}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-      >
+      {!token && <AuthError message="Missing verification token." />}
+      {error && <AuthError message={error} />}
+      {ok && <AuthSuccess message={ok} />}
+
+      <button type="submit" disabled={loading || !token} className={authBtnCls}>
         {loading ? <InlineSpinner className="h-4 w-4 animate-spin" /> : null}
         {loading ? "Verifying…" : "Verify email"}
       </button>
-      {!token ? <div className="text-sm text-red-700">Missing verification token.</div> : null}
-      {error ? <div className="text-sm text-red-700">{error}</div> : null}
-      {ok ? <div className="text-sm text-emerald-700">{ok}</div> : null}
     </form>
   );
 }

@@ -2,11 +2,9 @@ import { InlineSpinner } from "@/components/InlineSpinner";
 
 export default function Loading() {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-      <div className="flex items-center gap-3 text-sm text-zinc-700">
-        <InlineSpinner className="h-5 w-5 animate-spin" />
-        Loading billing…
-      </div>
+    <div className="flex items-center gap-3 py-10 text-sm text-zinc-400">
+      <InlineSpinner className="h-4 w-4 animate-spin text-violet-500" />
+      Loading billing…
     </div>
   );
 }
