@@ -217,7 +217,7 @@ export async function handleInboundChatMessage(input: {
     }).catch(() => []);
     const profileMemoryStrings = profileMemories.slice(0, 1).map((m) => m.content);
 
-    const generateNotice = async (context: string, fallback: string) => {
+    const generateNotice = async (context: string, fallback: string, taskId?: string) => {
       return await generateAgentNotice({
         agentName: agent.name,
         agentRole: agent.role,
@@ -225,6 +225,11 @@ export async function handleInboundChatMessage(input: {
         profileMemories: profileMemoryStrings,
         context,
         fallback,
+        usageContext: {
+          clientId: msg.clientId,
+          agentId: agent.id,
+          ...(taskId ? { taskId } : {}),
+        },
       }).catch(() => fallback);
     };
 
@@ -303,6 +308,11 @@ export async function handleInboundChatMessage(input: {
         taskText: text,
         plan,
         profileMemories: profileMemoryStrings,
+        usageContext: {
+          clientId: msg.clientId,
+          agentId: agent.id,
+          taskId: task.id,
+        },
       }).catch(() => null);
 
       await transport.postMessage({
@@ -312,7 +322,8 @@ export async function handleInboundChatMessage(input: {
           ack ||
           (await generateNotice(
             "Acknowledge starting work on the user's request and promise a single follow-up answer.",
-            "On it - I'll look this up and come back with one answer."
+            "On it - I'll look this up and come back with one answer.",
+            task.id
           )),
         author,
       });
@@ -326,7 +337,8 @@ export async function handleInboundChatMessage(input: {
         postedProgressHeader = true;
         const header = await generateNotice(
           "Send a brief progress-header sentence that you'll post quick updates while working.",
-          "I'll share quick progress notes in this thread as I work."
+          "I'll share quick progress notes in this thread as I work.",
+          task.id
         );
         await transport.postProgress({
           conversationId: msg.conversationId,
@@ -384,7 +396,8 @@ export async function handleInboundChatMessage(input: {
         const msgText = err instanceof Error ? err.message : String(err);
         const notice = await generateNotice(
           `You hit an execution error while handling the user's request. Error detail: ${msgText}`,
-          `I hit an error while running that: ${msgText}`
+          `I hit an error while running that: ${msgText}`,
+          task.id
         );
         await transport.postMessage({
           conversationId: msg.conversationId,
@@ -409,6 +422,10 @@ export async function handleInboundChatMessage(input: {
       agentRole: agent.role,
       systemPrompt: agent.system_prompt,
       userMessage: text,
+      usageContext: {
+        clientId: msg.clientId,
+        agentId: agent.id,
+      },
     });
     if (conversational.type === "chat") {
       await transport.postMessage({

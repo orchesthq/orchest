@@ -84,6 +84,11 @@ async function runAgentTaskLegacy(
       agentSystemPrompt: ctx.agent.system_prompt,
       plan,
       executed,
+      usageContext: {
+        clientId: ctx.client.id,
+        agentId: ctx.agent.id,
+        taskId,
+      },
     });
 
     await completeTask(taskId, summary);

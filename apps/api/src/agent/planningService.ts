@@ -17,6 +17,11 @@ export async function createPlan(input: {
     agentSystemPrompt: input.agent.system_prompt,
     memories,
     availableTools: registry.list().map((t) => ({ name: t.name, description: t.description })),
+    usageContext: {
+      clientId: input.agent.client_id,
+      agentId: input.agent.id,
+      taskId: input.task.id,
+    },
   });
 }
 

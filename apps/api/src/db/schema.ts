@@ -61,6 +61,45 @@ export type TaskRow = {
   updated_at: string;
 };
 
+export type TokenUsageEventRow = {
+  id: string;
+  client_id: string;
+  agent_id: string | null;
+  task_id: string | null;
+  provider: string;
+  model: string;
+  operation: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_prompt_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  provider_request_id: string | null;
+  metadata: unknown;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type TokenLedgerEntryType =
+  | "grant"
+  | "topup"
+  | "subscription_allocation"
+  | "usage_debit"
+  | "adjustment";
+
+export type TokenLedgerEntryRow = {
+  id: string;
+  client_id: string;
+  entry_type: TokenLedgerEntryType;
+  tokens: number;
+  reference_type: string | null;
+  reference_id: string | null;
+  note: string | null;
+  metadata: unknown;
+  created_by_user_id: string | null;
+  created_at: string;
+};
+
 export type AgentMemoryRow = {
   id: string;
   agent_id: string;
@@ -1124,6 +1163,148 @@ export async function failTask(taskId: string, output: string): Promise<void> {
     taskId,
     output,
   ]);
+}
+
+export async function insertTokenUsageEvent(input: {
+  clientId: string;
+  agentId?: string | null;
+  taskId?: string | null;
+  provider: string;
+  model: string;
+  operation?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  cachedPromptTokens?: number;
+  reasoningTokens?: number;
+  providerRequestId?: string | null;
+  metadata?: unknown;
+  occurredAt?: Date;
+}): Promise<TokenUsageEventRow> {
+  assertUuid(input.clientId, "clientId");
+  if (input.agentId) assertUuid(input.agentId, "agentId");
+  if (input.taskId) assertUuid(input.taskId, "taskId");
+
+  const provider = String(input.provider ?? "").trim();
+  const model = String(input.model ?? "").trim();
+  if (!provider) throw new Error("provider is required");
+  if (!model) throw new Error("model is required");
+
+  const promptTokens = Math.max(0, Number(input.promptTokens ?? 0) || 0);
+  const completionTokens = Math.max(0, Number(input.completionTokens ?? 0) || 0);
+  const cachedPromptTokens = Math.max(0, Number(input.cachedPromptTokens ?? 0) || 0);
+  const reasoningTokens = Math.max(0, Number(input.reasoningTokens ?? 0) || 0);
+  const metadataJson = JSON.stringify(input.metadata ?? {});
+
+  const { rows } = await query<TokenUsageEventRow>(
+    [
+      "insert into token_usage_events (",
+      "  client_id, agent_id, task_id, provider, model, operation,",
+      "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
+      "  provider_request_id, metadata, occurred_at",
+      ") values (",
+      "  $1, $2, $3, $4, $5, $6,",
+      "  $7, $8, $9, $10,",
+      "  $11, $12::jsonb, $13",
+      ")",
+      "on conflict (provider, provider_request_id)",
+      "where provider_request_id is not null",
+      "do nothing",
+      "returning",
+      "  id, client_id, agent_id, task_id, provider, model, operation,",
+      "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
+      "  total_tokens, provider_request_id, metadata, occurred_at, created_at",
+    ].join("\n"),
+    [
+      input.clientId,
+      input.agentId ?? null,
+      input.taskId ?? null,
+      provider,
+      model,
+      input.operation ?? "chat.completion",
+      promptTokens,
+      completionTokens,
+      cachedPromptTokens,
+      reasoningTokens,
+      input.providerRequestId ?? null,
+      metadataJson,
+      input.occurredAt?.toISOString() ?? new Date().toISOString(),
+    ]
+  );
+  if (rows[0]) return rows[0];
+  if (!input.providerRequestId) throw new Error("Failed to insert token usage event");
+
+  const { rows: existing } = await query<TokenUsageEventRow>(
+    [
+      "select",
+      "  id, client_id, agent_id, task_id, provider, model, operation,",
+      "  prompt_tokens, completion_tokens, cached_prompt_tokens, reasoning_tokens,",
+      "  total_tokens, provider_request_id, metadata, occurred_at, created_at",
+      "from token_usage_events",
+      "where provider = $1 and provider_request_id = $2",
+      "limit 1",
+    ].join("\n"),
+    [provider, input.providerRequestId]
+  );
+  return one(existing, "Failed to load token usage event after conflict");
+}
+
+export async function insertTokenLedgerEntry(input: {
+  clientId: string;
+  entryType: TokenLedgerEntryType;
+  tokens: number;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  note?: string | null;
+  metadata?: unknown;
+  createdByUserId?: string | null;
+}): Promise<TokenLedgerEntryRow> {
+  assertUuid(input.clientId, "clientId");
+  if (input.referenceId) assertUuid(input.referenceId, "referenceId");
+  if (input.createdByUserId) assertUuid(input.createdByUserId, "createdByUserId");
+
+  const tokens = Math.trunc(Number(input.tokens));
+  if (!Number.isFinite(tokens) || tokens === 0) {
+    throw new Error("tokens must be a non-zero integer");
+  }
+  const metadataJson = JSON.stringify(input.metadata ?? {});
+
+  const { rows } = await query<TokenLedgerEntryRow>(
+    [
+      "insert into token_ledger_entries (",
+      "  client_id, entry_type, tokens, reference_type, reference_id, note, metadata, created_by_user_id",
+      ") values (",
+      "  $1, $2, $3, $4, $5, $6, $7::jsonb, $8",
+      ")",
+      "on conflict (reference_type, reference_id)",
+      "where reference_type is not null and reference_id is not null",
+      "do nothing",
+      "returning id, client_id, entry_type, tokens, reference_type, reference_id, note, metadata, created_by_user_id, created_at",
+    ].join("\n"),
+    [
+      input.clientId,
+      input.entryType,
+      tokens,
+      input.referenceType ?? null,
+      input.referenceId ?? null,
+      input.note ?? null,
+      metadataJson,
+      input.createdByUserId ?? null,
+    ]
+  );
+
+  if (rows[0]) return rows[0];
+  if (!input.referenceType || !input.referenceId) throw new Error("Failed to insert token ledger entry");
+
+  const { rows: existing } = await query<TokenLedgerEntryRow>(
+    [
+      "select id, client_id, entry_type, tokens, reference_type, reference_id, note, metadata, created_by_user_id, created_at",
+      "from token_ledger_entries",
+      "where reference_type = $1 and reference_id = $2",
+      "limit 1",
+    ].join("\n"),
+    [input.referenceType, input.referenceId]
+  );
+  return one(existing, "Failed to load token ledger entry after conflict");
 }
 
 export async function listAgentMemoriesScoped(input: {

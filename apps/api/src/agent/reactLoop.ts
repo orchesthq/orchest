@@ -54,6 +54,11 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       taskText: taskInput,
       availableCapabilities: caps,
       toolAccessSummary: formatToolAccessSummary(toolAccess),
+      usageContext: {
+        clientId: ctx.client.id,
+        agentId: ctx.agent.id,
+        taskId,
+      },
     }).catch(() => null);
 
     const capabilities =
@@ -97,6 +102,11 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           executed,
           draft: final,
           profileMemories: memories.filter((m) => m.memory_type === "profile").slice(0, 1).map((m) => m.content),
+          usageContext: {
+            clientId: ctx.client.id,
+            agentId: ctx.agent.id,
+            taskId,
+          },
         });
 
         await completeTask(taskId, finalized);
@@ -144,6 +154,11 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       executed,
       draft: final,
       profileMemories: memories.filter((m) => m.memory_type === "profile").slice(0, 1).map((m) => m.content),
+      usageContext: {
+        clientId: ctx.client.id,
+        agentId: ctx.agent.id,
+        taskId,
+      },
     });
 
     await completeTask(taskId, finalized);

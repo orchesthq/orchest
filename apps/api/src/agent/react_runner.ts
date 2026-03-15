@@ -230,7 +230,16 @@ export async function runReActLoop(input: ReActOptions): Promise<{
 
   for (let i = 0; i < maxIterations; i++) {
     const iterStart = Date.now();
-    const resp = await agentChatWithTools({ system, messages, tools });
+    const resp = await agentChatWithTools({
+      system,
+      messages,
+      tools,
+      usageContext: {
+        clientId: input.clientId,
+        agentId: input.agentId,
+        taskId: input.taskId,
+      },
+    });
 
     if (resp.type === "final") {
       lastDraftFinal = resp.final;
