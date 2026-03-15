@@ -19,7 +19,7 @@ router.get("/summary", async (req, res, next) => {
     const clientId = req.clientId!;
     const parsed = filtersSchema
       .extend({
-        groupBy: z.enum(["day", "model", "agent", "operation"]).optional(),
+        groupBy: z.enum(["day", "model", "agent", "operation", "day_agent"]).optional(),
       })
       .parse(req.query);
 

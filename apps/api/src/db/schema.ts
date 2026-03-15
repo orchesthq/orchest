@@ -1790,7 +1790,7 @@ export async function getTokenUsageSummaryScoped(input: {
   modelGroup?: string;
   provider?: string;
   operation?: string;
-  groupBy?: "day" | "model" | "agent" | "operation";
+  groupBy?: "day" | "model" | "agent" | "operation" | "day_agent";
 }): Promise<{
   totals: {
     promptTokens: number;
@@ -1844,6 +1844,8 @@ export async function getTokenUsageSummaryScoped(input: {
   const groupExpr =
     input.groupBy === "day"
       ? "to_char(date_trunc('day', occurred_at), 'YYYY-MM-DD')"
+      : input.groupBy === "day_agent"
+        ? "to_char(date_trunc('day', occurred_at), 'YYYY-MM-DD') || '|' || coalesce(agent_id::text, 'none')"
       : input.groupBy === "agent"
         ? "coalesce(agent_id::text, 'none')"
         : input.groupBy === "operation"

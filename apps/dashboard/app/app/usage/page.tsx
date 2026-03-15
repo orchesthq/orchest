@@ -48,6 +48,11 @@ type UsageFilterOptions = {
 };
 
 type DateRangePreset = "mtd" | "last7d" | "last14d" | "last30d" | "custom";
+type ChartDayBucket = {
+  day: string;
+  totalTokens: number;
+  segments: Array<{ agentId: string; tokens: number }>;
+};
 
 function percentLabel(pct: number | null): string {
   if (pct == null || !Number.isFinite(pct)) return "No budget";
@@ -86,6 +91,42 @@ function getPresetRange(preset: DateRangePreset): { fromYmd: string; toYmd: stri
 function chartLabelFromDay(dayKey: string): string {
   if (dayKey.length >= 10) return dayKey.slice(5);
   return dayKey;
+}
+
+function listDaysInclusive(fromYmd: string, throughYmd: string): string[] {
+  const out: string[] = [];
+  const start = new Date(`${fromYmd}T00:00:00.000Z`);
+  const end = new Date(`${throughYmd}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return out;
+  const cur = new Date(start);
+  while (cur <= end) {
+    out.push(toYmd(cur));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function formatCompactTokens(n: number): string {
+  const v = Math.max(0, Number(n) || 0);
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${Math.round(v / 1_000)}k`;
+  return String(Math.round(v));
+}
+
+function colorForIndex(i: number): string {
+  const palette = [
+    "#7C3AED",
+    "#06B6D4",
+    "#F59E0B",
+    "#10B981",
+    "#EF4444",
+    "#6366F1",
+    "#84CC16",
+    "#EC4899",
+    "#14B8A6",
+    "#F97316",
+  ];
+  return palette[i % palette.length];
 }
 
 function mapModelToGroup(model: string, modelGroups: string[]): string {
@@ -127,8 +168,6 @@ export default async function UsagePage({
     rawRange === "last7d" || rawRange === "last14d" || rawRange === "last30d" || rawRange === "custom"
       ? rawRange
       : "mtd";
-  const chartGroup = get("chartGroup") === "agent" ? "agent" : "day";
-
   const usePreset = range !== "custom";
   const presetRange = getPresetRange(range);
   const effectiveFrom = usePreset ? presetRange.fromYmd : from;
@@ -141,9 +180,15 @@ export default async function UsagePage({
   if (modelGroup) q.set("modelGroup", modelGroup);
   if (provider) q.set("provider", provider);
 
-  const [agentsResp, summary, eventsResp, billing, filterOptions] = await Promise.all([
+  const [agentsResp, summary, chartSummary, eventsResp, billing, filterOptions] = await Promise.all([
     apiFetchForClient<{ agents: Agent[] }>(clientId, "/agents", { method: "GET" }).catch(() => ({ agents: [] })),
-    apiFetchForClient<UsageSummary>(clientId, `/usage/summary?groupBy=${chartGroup}&${q.toString()}`, {
+    apiFetchForClient<UsageSummary>(clientId, `/usage/summary?groupBy=day&${q.toString()}`, {
+      method: "GET",
+    }).catch(() => ({
+      totals: { promptTokens: 0, completionTokens: 0, totalTokens: 0, billableUsdMicros: 0 },
+      groups: [],
+    })),
+    apiFetchForClient<UsageSummary>(clientId, `/usage/summary?groupBy=day_agent&${q.toString()}`, {
       method: "GET",
     }).catch(() => ({
       totals: { promptTokens: 0, completionTokens: 0, totalTokens: 0, billableUsdMicros: 0 },
@@ -170,9 +215,33 @@ export default async function UsagePage({
   const modelGroups = filterOptions.modelGroups ?? ["gpt-5.3", "gpt-5.2", "gpt-5.1", "gpt-5-mini", "gpt-5-nano", "gpt-5"];
   const events = eventsResp.events ?? [];
   const agentNameById = new Map(agents.map((a) => [a.id, a.name] as const));
-
-  const maxChartTokens = Math.max(1, ...summary.groups.map((g) => g.totalTokens));
-  const chartSeries = chartGroup === "day" ? summary.groups.slice(-30) : summary.groups;
+  const daysInRange = listDaysInclusive(effectiveFrom, effectiveTo);
+  const chartMap = new Map<string, Map<string, number>>();
+  for (const g of chartSummary.groups) {
+    const [day, agent] = String(g.key).split("|");
+    if (!day || !agent) continue;
+    const byAgent = chartMap.get(day) ?? new Map<string, number>();
+    byAgent.set(agent, (byAgent.get(agent) ?? 0) + g.totalTokens);
+    chartMap.set(day, byAgent);
+  }
+  const chartBuckets: ChartDayBucket[] = daysInRange.map((day) => {
+    const byAgent = chartMap.get(day) ?? new Map<string, number>();
+    const segments = Array.from(byAgent.entries())
+      .map(([agentId, tokens]) => ({ agentId, tokens }))
+      .sort((a, b) => b.tokens - a.tokens);
+    const totalTokens = segments.reduce((acc, s) => acc + s.tokens, 0);
+    return { day, totalTokens, segments };
+  });
+  const maxChartTokens = Math.max(1, ...chartBuckets.map((b) => b.totalTokens));
+  const allAgentIdsInChart = Array.from(
+    new Set(chartBuckets.flatMap((b) => b.segments.map((s) => s.agentId)))
+  ).sort((a, b) => {
+    const aName = a === "none" ? "Unassigned" : (agentNameById.get(a) ?? a);
+    const bName = b === "none" ? "Unassigned" : (agentNameById.get(b) ?? b);
+    return aName.localeCompare(bName);
+  });
+  const agentColor = new Map(allAgentIdsInChart.map((id, idx) => [id, colorForIndex(idx)] as const));
+  const yTickRatios = [1, 0.75, 0.5, 0.25, 0];
 
   const groupedByTask = new Map<
     string,
@@ -263,10 +332,6 @@ export default async function UsagePage({
             </option>
           ))}
         </select>
-        <select name="chartGroup" defaultValue={chartGroup} className="rounded-md border border-zinc-300 px-3 py-2 text-sm">
-          <option value="day">Chart by day</option>
-          <option value="agent">Chart by agent</option>
-        </select>
         <div className="flex flex-wrap gap-2 md:col-span-6">
           <button
             name="range"
@@ -331,36 +396,82 @@ export default async function UsagePage({
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-zinc-900">
-          {chartGroup === "agent" ? "Token usage by agent" : "Daily token usage"}
-        </h2>
+        <h2 className="mb-1 text-sm font-semibold text-zinc-900">Daily token usage</h2>
         <p className="mb-3 text-xs text-zinc-500">Updates with the current filters.</p>
-        <div className="h-52 rounded-xl border border-zinc-100 bg-zinc-50 p-3">
-          <div className="flex h-full items-end gap-2">
-            {chartSeries.map((d) => {
-              const h = Math.max(6, Math.round((d.totalTokens / maxChartTokens) * 100));
-              const label =
-                chartGroup === "agent"
-                  ? d.key === "none"
-                    ? "Unassigned"
-                    : (agentNameById.get(d.key) ?? d.key.slice(0, 8))
-                  : chartLabelFromDay(d.key);
-              return (
-                <div key={d.key} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
-                  <div
-                    className="w-full rounded-sm bg-violet-500/85"
-                    style={{ height: `${h}%` }}
-                    title={`${label}: ${d.totalTokens.toLocaleString()} tokens`}
-                  />
-                  <div className="max-w-full truncate text-[10px] text-zinc-500">{label}</div>
-                </div>
-              );
-            })}
-            {chartSeries.length === 0 ? (
-              <div className="flex h-full w-full items-center justify-center text-sm text-zinc-500">
-                No chart data for selected filters.
+        {allAgentIdsInChart.length > 0 ? (
+          <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-600">
+            {allAgentIdsInChart.map((agentKey) => (
+              <div key={agentKey} className="inline-flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{ backgroundColor: agentColor.get(agentKey) ?? "#7C3AED" }}
+                />
+                <span>{agentKey === "none" ? "Unassigned" : (agentNameById.get(agentKey) ?? agentKey)}</span>
               </div>
-            ) : null}
+            ))}
+          </div>
+        ) : null}
+        <div className="rounded-xl border border-zinc-100 bg-zinc-50 p-3">
+          <div className="grid grid-cols-[56px_1fr] gap-2">
+            <div className="relative h-56">
+              {yTickRatios.map((ratio) => (
+                <div
+                  key={ratio}
+                  className="absolute right-0 text-[10px] text-zinc-500"
+                  style={{ top: `${(1 - ratio) * 100}%`, transform: "translateY(-50%)" }}
+                >
+                  {formatCompactTokens(Math.round(maxChartTokens * ratio))}
+                </div>
+              ))}
+            </div>
+            <div className="relative h-56">
+              {yTickRatios.map((ratio) => (
+                <div
+                  key={`line-${ratio}`}
+                  className="absolute left-0 right-0 border-t border-zinc-200/70"
+                  style={{ top: `${(1 - ratio) * 100}%` }}
+                />
+              ))}
+              {chartBuckets.length === 0 ? (
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
+                  No chart data for selected filters.
+                </div>
+              ) : (
+                <div className="relative z-10 flex h-full items-end gap-1">
+                  {chartBuckets.map((bucket, idx) => (
+                    <div key={bucket.day} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
+                      <div className="relative w-full overflow-hidden rounded-sm">
+                        {bucket.segments.length === 0 ? (
+                          <div className="h-px w-full bg-zinc-200" />
+                        ) : (
+                          <div className="flex w-full flex-col-reverse">
+                            {bucket.segments.map((seg) => {
+                              const segHeight = (seg.tokens / maxChartTokens) * 100;
+                              const agentLabel =
+                                seg.agentId === "none" ? "Unassigned" : (agentNameById.get(seg.agentId) ?? seg.agentId);
+                              return (
+                                <div
+                                  key={`${bucket.day}:${seg.agentId}`}
+                                  className="w-full"
+                                  style={{
+                                    height: `${segHeight}%`,
+                                    backgroundColor: agentColor.get(seg.agentId) ?? "#7C3AED",
+                                  }}
+                                  title={`${bucket.day} • ${agentLabel}: ${seg.tokens.toLocaleString()} tokens`}
+                                />
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      <div className="max-w-full truncate text-[10px] text-zinc-500">
+                        {idx === 0 || idx === chartBuckets.length - 1 || idx % 3 === 0 ? chartLabelFromDay(bucket.day) : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
