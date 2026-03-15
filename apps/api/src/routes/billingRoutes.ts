@@ -12,6 +12,8 @@ router.get("/balance", async (req, res, next) => {
       balanceUsdMicros: summary.balanceUsdMicros,
       monthSpendUsdMicros: summary.monthSpendUsdMicros,
       monthCreditsUsdMicros: summary.monthCreditsUsdMicros,
+      monthlyBudgetUsdMicros: summary.monthlyBudgetUsdMicros,
+      monthUsagePercent: summary.monthUsagePercent,
     });
   } catch (err) {
     next(err);

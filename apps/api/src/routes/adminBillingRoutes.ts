@@ -73,6 +73,7 @@ router.post("/profile", async (req, res, next) => {
       .object({
         markupMultiplier: z.coerce.number().positive().optional(),
         freeMonthlyUsdMicros: z.coerce.number().int().min(0).optional(),
+        monthlyBudgetUsdMicros: z.coerce.number().int().min(0).optional(),
       })
       .parse(req.body);
 
@@ -80,6 +81,7 @@ router.post("/profile", async (req, res, next) => {
       clientId,
       markupMultiplier: body.markupMultiplier,
       freeMonthlyUsdMicros: body.freeMonthlyUsdMicros,
+      monthlyBudgetUsdMicros: body.monthlyBudgetUsdMicros,
       billingMode: "usd_credits",
     });
     res.status(200).json({ profile });

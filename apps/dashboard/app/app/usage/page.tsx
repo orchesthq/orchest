@@ -34,6 +34,19 @@ type UsageEvent = {
   occurred_at: string;
 };
 
+type BillingBalance = {
+  balanceUsdMicros: number;
+  monthSpendUsdMicros: number;
+  monthCreditsUsdMicros: number;
+  monthlyBudgetUsdMicros: number | null;
+  monthUsagePercent: number | null;
+};
+
+function percentLabel(pct: number | null): string {
+  if (pct == null || !Number.isFinite(pct)) return "No budget";
+  return `${Math.max(0, pct).toFixed(1)}%`;
+}
+
 export default async function UsagePage({
   searchParams,
 }: {
@@ -67,7 +80,7 @@ export default async function UsagePage({
   if (model) q.set("model", model);
   if (provider) q.set("provider", provider);
 
-  const [agentsResp, summary, eventsResp] = await Promise.all([
+  const [agentsResp, summary, eventsResp, billing] = await Promise.all([
     apiFetchForClient<{ agents: Agent[] }>(clientId, "/agents", { method: "GET" }).catch(() => ({ agents: [] })),
     apiFetchForClient<UsageSummary>(clientId, `/usage/summary?groupBy=day&${q.toString()}`, {
       method: "GET",
@@ -78,6 +91,13 @@ export default async function UsagePage({
     apiFetchForClient<{ events: UsageEvent[] }>(clientId, `/usage/events?limit=100&${q.toString()}`, {
       method: "GET",
     }).catch(() => ({ events: [] })),
+    apiFetchForClient<BillingBalance>(clientId, "/billing/balance", { method: "GET" }).catch(() => ({
+      balanceUsdMicros: 0,
+      monthSpendUsdMicros: 0,
+      monthCreditsUsdMicros: 0,
+      monthlyBudgetUsdMicros: null,
+      monthUsagePercent: null,
+    })),
   ]);
 
   const agents = agentsResp.agents ?? [];
@@ -157,10 +177,11 @@ export default async function UsagePage({
         </div>
       </form>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card label="Prompt tokens" value={summary.totals.promptTokens.toLocaleString()} />
         <Card label="Completion tokens" value={summary.totals.completionTokens.toLocaleString()} />
         <Card label="Total tokens" value={summary.totals.totalTokens.toLocaleString()} />
+        <Card label="Monthly budget used" value={percentLabel(billing.monthUsagePercent)} />
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">

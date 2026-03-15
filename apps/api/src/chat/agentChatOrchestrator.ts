@@ -7,6 +7,7 @@ import {
 import { runAgentTask } from "../agent/agentLoop";
 import type { ContextMode, MemoryContextPolicy, SingleSourceType } from "../agent/memoryService";
 import { generateAgentNotice, generatePlanAck, tryConversationalReply } from "../services/llm/llmOrchestrationService";
+import { InsufficientBalanceError } from "../services/llm/openaiClient";
 import type { ChatAuthor, ChatTransport, InboundChatMessage } from "./types";
 
 const DOC_LIKE =
@@ -23,6 +24,8 @@ const SUMMARIZE_THREAD_LIKE =
   /\b(summarize|summary|recap|tl;dr)\b.*\b(thread|conversation|chat)\b|\b(this|current)\s+(thread|conversation|chat)\b/i;
 const SUMMARIZE_EXTERNAL_LIKE =
   /\b(summarize|summary|recap|tl;dr)\b.*\b(document|doc|file|text|content|notes|message)\b|\b(this)\s+(document|doc|file|text|content)\b/i;
+const INSUFFICIENT_BALANCE_MESSAGE =
+  "Your Orchest usage budget is depleted. Please top up your Orchest account to continue.";
 
 export type OrchestratorOptions = {
   /**
@@ -180,6 +183,13 @@ function isQuestionLike(text: string): boolean {
   const t = String(text ?? "").trim();
   if (!t) return false;
   return QUESTION_LIKE.test(t) || QUESTION_WORD.test(t) || QUESTION_START.test(t);
+}
+
+function isInsufficientBalanceError(err: unknown): boolean {
+  if (err instanceof InsufficientBalanceError) return true;
+  if (!(err instanceof Error)) return false;
+  const msg = String(err.message ?? "").toLowerCase();
+  return msg.includes("usage budget is depleted") || msg.includes("top up your orchest account");
 }
 
 export async function handleInboundChatMessage(input: {
@@ -394,6 +404,15 @@ export async function handleInboundChatMessage(input: {
         });
       })
       .catch(async (err) => {
+        if (isInsufficientBalanceError(err)) {
+          await transport.postMessage({
+            conversationId: msg.conversationId,
+            threadId: msg.threadId,
+            text: INSUFFICIENT_BALANCE_MESSAGE,
+            author,
+          });
+          return;
+        }
         const msgText = err instanceof Error ? err.message : String(err);
         const notice = await generateNotice(
           `You hit an execution error while handling the user's request. Error detail: ${msgText}`,
@@ -424,17 +443,34 @@ export async function handleInboundChatMessage(input: {
       taskInput: `[conversation] ${text}`,
     }).catch(() => null);
 
-    const conversational = await tryConversationalReply({
-      agentName: agent.name,
-      agentRole: agent.role,
-      systemPrompt: agent.system_prompt,
-      userMessage: text,
-      usageContext: {
-        clientId: msg.clientId,
-        agentId: agent.id,
-        ...(interactionTask?.id ? { taskId: interactionTask.id } : {}),
-      },
-    });
+    let conversational: Awaited<ReturnType<typeof tryConversationalReply>>;
+    try {
+      conversational = await tryConversationalReply({
+        agentName: agent.name,
+        agentRole: agent.role,
+        systemPrompt: agent.system_prompt,
+        userMessage: text,
+        usageContext: {
+          clientId: msg.clientId,
+          agentId: agent.id,
+          ...(interactionTask?.id ? { taskId: interactionTask.id } : {}),
+        },
+      });
+    } catch (err) {
+      if (isInsufficientBalanceError(err)) {
+        if (interactionTask?.id) {
+          await completeTask(interactionTask.id, INSUFFICIENT_BALANCE_MESSAGE).catch(() => undefined);
+        }
+        await transport.postMessage({
+          conversationId: msg.conversationId,
+          threadId: msg.threadId,
+          text: INSUFFICIENT_BALANCE_MESSAGE,
+          author,
+        });
+        return;
+      }
+      throw err;
+    }
     if (conversational.type === "chat") {
       if (interactionTask?.id) {
         await completeTask(interactionTask.id, conversational.reply).catch(() => undefined);

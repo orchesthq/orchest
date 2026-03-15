@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isDbConfigured } from "../../db/client";
-import { getPartnerSetting } from "../../db/schema";
+import { getClientAvailableBalanceUsdMicros, getPartnerSetting } from "../../db/schema";
 import { persistLlmUsageAndBilling } from "../llmUsageBillingService";
 import { LlmClient, type TokenUsageContext } from "./llmClient";
 
@@ -19,6 +19,8 @@ const openAiPartnerSettingsSchema = z
   .passthrough();
 
 const OPENAI_SETTINGS_CACHE_TTL_MS = 30_000;
+const INSUFFICIENT_BALANCE_MESSAGE =
+  "Your Orchest usage budget is depleted. Please top up your Orchest account to continue.";
 let openAiConfigCache:
   | {
       loadedAtMs: number;
@@ -76,7 +78,18 @@ export class OpenAiClient extends LlmClient {
     this.defaultModel = cfg.model;
   }
 
+  private async assertClientCanUseLlm(usageContext?: TokenUsageContext): Promise<void> {
+    if (!isDbConfigured()) return;
+    const clientId = usageContext?.clientId;
+    if (!clientId) return;
+    const balanceUsdMicros = await getClientAvailableBalanceUsdMicros(clientId);
+    if (balanceUsdMicros <= 0) {
+      throw new InsufficientBalanceError();
+    }
+  }
+
   async chatCompletionRaw(body: any, usageContext?: TokenUsageContext): Promise<any> {
+    await this.assertClientCanUseLlm(usageContext);
     const url = `${this.baseUrl}/chat/completions`;
     const res = await fetch(url, {
       method: "POST",
@@ -104,6 +117,7 @@ export class OpenAiClient extends LlmClient {
   }
 
   async embeddingsRaw(body: any, usageContext?: TokenUsageContext): Promise<any> {
+    await this.assertClientCanUseLlm(usageContext);
     const url = `${this.baseUrl}/embeddings`;
     const res = await fetch(url, {
       method: "POST",
@@ -126,6 +140,13 @@ export class OpenAiClient extends LlmClient {
       usageContext,
     });
     return json;
+  }
+}
+
+export class InsufficientBalanceError extends Error {
+  constructor(message = INSUFFICIENT_BALANCE_MESSAGE) {
+    super(message);
+    this.name = "InsufficientBalanceError";
   }
 }
 

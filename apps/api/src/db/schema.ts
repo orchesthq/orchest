@@ -128,6 +128,7 @@ export type ClientBillingProfileRow = {
   client_id: string;
   markup_multiplier: string;
   free_monthly_usd_micros: string;
+  monthly_budget_usd_micros: string | null;
   billing_mode: "usd_credits";
   created_at: string;
   updated_at: string;
@@ -1350,6 +1351,7 @@ export async function getClientBillingProfileOrDefault(clientId: string): Promis
   clientId: string;
   markupMultiplier: number;
   freeMonthlyUsdMicros: number;
+  monthlyBudgetUsdMicros: number | null;
   billingMode: "usd_credits";
 }> {
   assertUuid(clientId, "clientId");
@@ -1357,6 +1359,7 @@ export async function getClientBillingProfileOrDefault(clientId: string): Promis
     client_id: string;
     markup_multiplier: string;
     free_monthly_usd_micros: string;
+    monthly_budget_usd_micros: string | null;
     billing_mode: "usd_credits";
   }>(
     [
@@ -1364,6 +1367,7 @@ export async function getClientBillingProfileOrDefault(clientId: string): Promis
       "  c.id as client_id,",
       "  coalesce(cbp.markup_multiplier, 1.0)::text as markup_multiplier,",
       "  coalesce(cbp.free_monthly_usd_micros, 0)::text as free_monthly_usd_micros,",
+      "  cbp.monthly_budget_usd_micros::text as monthly_budget_usd_micros,",
       "  coalesce(cbp.billing_mode, 'usd_credits')::text as billing_mode",
       "from clients c",
       "left join client_billing_profiles cbp on cbp.client_id = c.id",
@@ -1377,6 +1381,8 @@ export async function getClientBillingProfileOrDefault(clientId: string): Promis
     clientId: row.client_id,
     markupMultiplier: Number(row.markup_multiplier),
     freeMonthlyUsdMicros: Number(row.free_monthly_usd_micros),
+    monthlyBudgetUsdMicros:
+      row.monthly_budget_usd_micros == null ? null : Math.max(0, Number(row.monthly_budget_usd_micros)),
     billingMode: row.billing_mode,
   };
 }
@@ -1385,6 +1391,7 @@ export async function upsertClientBillingProfile(input: {
   clientId: string;
   markupMultiplier?: number;
   freeMonthlyUsdMicros?: number;
+  monthlyBudgetUsdMicros?: number;
   billingMode?: "usd_credits";
 }): Promise<ClientBillingProfileRow> {
   assertUuid(input.clientId, "clientId");
@@ -1392,21 +1399,37 @@ export async function upsertClientBillingProfile(input: {
     input.markupMultiplier == null ? null : Math.max(0.0001, Number(input.markupMultiplier) || 0.0001);
   const freeMonthlyUsdMicros =
     input.freeMonthlyUsdMicros == null ? null : Math.max(0, Math.trunc(Number(input.freeMonthlyUsdMicros) || 0));
+  const monthlyBudgetUsdMicros =
+    input.monthlyBudgetUsdMicros == null ? null : Math.max(0, Math.trunc(Number(input.monthlyBudgetUsdMicros) || 0));
 
   const { rows } = await query<ClientBillingProfileRow>(
     [
-      "insert into client_billing_profiles (client_id, markup_multiplier, free_monthly_usd_micros, billing_mode)",
-      "values ($1, coalesce($2, 1.0), coalesce($3, 0), coalesce($4, 'usd_credits'))",
+      "insert into client_billing_profiles (client_id, markup_multiplier, free_monthly_usd_micros, monthly_budget_usd_micros, billing_mode)",
+      "values ($1, coalesce($2, 1.0), coalesce($3, 0), $4, coalesce($5, 'usd_credits'))",
       "on conflict (client_id) do update set",
       "  markup_multiplier = coalesce($2, client_billing_profiles.markup_multiplier),",
       "  free_monthly_usd_micros = coalesce($3, client_billing_profiles.free_monthly_usd_micros),",
-      "  billing_mode = coalesce($4, client_billing_profiles.billing_mode),",
+      "  monthly_budget_usd_micros = coalesce($4, client_billing_profiles.monthly_budget_usd_micros),",
+      "  billing_mode = coalesce($5, client_billing_profiles.billing_mode),",
       "  updated_at = now()",
-      "returning client_id, markup_multiplier::text, free_monthly_usd_micros::text, billing_mode, created_at, updated_at",
+      "returning client_id, markup_multiplier::text, free_monthly_usd_micros::text, monthly_budget_usd_micros::text, billing_mode, created_at, updated_at",
     ].join("\n"),
-    [input.clientId, markupMultiplier, freeMonthlyUsdMicros, input.billingMode ?? null]
+    [input.clientId, markupMultiplier, freeMonthlyUsdMicros, monthlyBudgetUsdMicros, input.billingMode ?? null]
   );
   return one(rows, "Failed to upsert client billing profile");
+}
+
+export async function getClientAvailableBalanceUsdMicros(clientId: string): Promise<number> {
+  assertUuid(clientId, "clientId");
+  const { rows } = await query<{ balance: string }>(
+    [
+      "select coalesce(sum(tokens), 0)::text as balance",
+      "from token_ledger_entries",
+      "where client_id = $1",
+    ].join("\n"),
+    [clientId]
+  );
+  return Number(rows[0]?.balance ?? "0");
 }
 
 export async function createLlmPricingRate(input: {
@@ -1623,23 +1646,39 @@ export async function getBillingBalanceSummaryScoped(clientId: string): Promise<
   balanceUsdMicros: number;
   monthSpendUsdMicros: number;
   monthCreditsUsdMicros: number;
+  monthlyBudgetUsdMicros: number | null;
+  monthUsagePercent: number | null;
 }> {
   assertUuid(clientId, "clientId");
-  const { rows } = await query<{ balance: string; month_spend: string; month_credits: string }>(
+  const { rows } = await query<{
+    balance: string;
+    month_spend: string;
+    month_credits: string;
+    monthly_budget: string | null;
+  }>(
     [
       "select",
-      "  coalesce(sum(tokens), 0)::text as balance,",
-      "  coalesce(sum(case when tokens < 0 and created_at >= date_trunc('month', now()) then -tokens else 0 end), 0)::text as month_spend,",
-      "  coalesce(sum(case when tokens > 0 and created_at >= date_trunc('month', now()) then tokens else 0 end), 0)::text as month_credits",
-      "from token_ledger_entries",
-      "where client_id = $1",
+      "  (select coalesce(sum(tokens), 0)::text from token_ledger_entries where client_id = $1) as balance,",
+      "  (select coalesce(sum(case when tokens < 0 and created_at >= date_trunc('month', now()) then -tokens else 0 end), 0)::text from token_ledger_entries where client_id = $1) as month_spend,",
+      "  (select coalesce(sum(case when tokens > 0 and created_at >= date_trunc('month', now()) then tokens else 0 end), 0)::text from token_ledger_entries where client_id = $1) as month_credits,",
+      "  (select monthly_budget_usd_micros::text from client_billing_profiles where client_id = $1) as monthly_budget",
     ].join("\n"),
     [clientId]
   );
+  const monthSpendUsdMicros = Number(rows[0]?.month_spend ?? "0");
+  const monthCreditsUsdMicros = Number(rows[0]?.month_credits ?? "0");
+  const monthlyBudgetFromProfile =
+    rows[0]?.monthly_budget == null ? null : Math.max(0, Number(rows[0]?.monthly_budget ?? "0"));
+  const monthlyBudgetUsdMicros = monthlyBudgetFromProfile == null ? monthCreditsUsdMicros : monthlyBudgetFromProfile;
+  const monthUsagePercent =
+    monthlyBudgetUsdMicros > 0 ? Math.round((monthSpendUsdMicros / monthlyBudgetUsdMicros) * 10_000) / 100 : null;
+
   return {
     balanceUsdMicros: Number(rows[0]?.balance ?? "0"),
-    monthSpendUsdMicros: Number(rows[0]?.month_spend ?? "0"),
-    monthCreditsUsdMicros: Number(rows[0]?.month_credits ?? "0"),
+    monthSpendUsdMicros,
+    monthCreditsUsdMicros,
+    monthlyBudgetUsdMicros,
+    monthUsagePercent,
   };
 }
 
