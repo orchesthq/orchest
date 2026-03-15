@@ -1,6 +1,6 @@
 import express from "express";
 import { z } from "zod";
-import { getTokenUsageSummaryScoped, listTokenUsageEventsScoped } from "../db/schema";
+import { getTokenUsageSummaryScoped, listLlmModelCatalog, listTokenUsageEventsScoped } from "../db/schema";
 
 const router = express.Router();
 
@@ -9,6 +9,7 @@ const filtersSchema = z.object({
   to: z.string().datetime().optional(),
   agentId: z.string().uuid().optional(),
   model: z.string().min(1).optional(),
+  modelGroup: z.string().min(1).optional(),
   provider: z.string().min(1).optional(),
   operation: z.string().min(1).optional(),
 });
@@ -28,6 +29,7 @@ router.get("/summary", async (req, res, next) => {
       to: parsed.to,
       agentId: parsed.agentId,
       model: parsed.model,
+      modelGroup: parsed.modelGroup,
       provider: parsed.provider,
       operation: parsed.operation,
       groupBy: parsed.groupBy,
@@ -54,12 +56,24 @@ router.get("/events", async (req, res, next) => {
       to: parsed.to,
       agentId: parsed.agentId,
       model: parsed.model,
+      modelGroup: parsed.modelGroup,
       provider: parsed.provider,
       operation: parsed.operation,
       limit: parsed.limit,
       offset: parsed.offset,
     });
     res.status(200).json({ events });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/filter-options", async (_req, res, next) => {
+  try {
+    const rows = await listLlmModelCatalog({ active: true });
+    const providers = Array.from(new Set(rows.map((r) => r.provider))).sort((a, b) => a.localeCompare(b));
+    const modelGroups = Array.from(new Set(rows.map((r) => r.model_group))).sort((a, b) => a.localeCompare(b));
+    res.status(200).json({ providers, modelGroups });
   } catch (err) {
     next(err);
   }

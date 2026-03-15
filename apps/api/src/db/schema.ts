@@ -124,6 +124,15 @@ export type LlmPricingRateRow = {
   updated_at: string;
 };
 
+export type LlmModelCatalogRow = {
+  id: string;
+  provider: string;
+  model_group: string;
+  model_specific: string;
+  active: boolean;
+  created_at: string;
+};
+
 export type ClientBillingProfileRow = {
   client_id: string;
   markup_multiplier: string;
@@ -1710,6 +1719,7 @@ export async function listTokenUsageEventsScoped(input: {
   to?: string;
   agentId?: string;
   model?: string;
+  modelGroup?: string;
   provider?: string;
   operation?: string;
   limit?: number;
@@ -1735,6 +1745,11 @@ export async function listTokenUsageEventsScoped(input: {
   if (input.model) {
     where.push(`model = $${i++}`);
     params.push(input.model);
+  }
+  if (input.modelGroup) {
+    where.push(`(model = $${i} or model like $${i} || '-%')`);
+    params.push(input.modelGroup);
+    i += 1;
   }
   if (input.provider) {
     where.push(`provider = $${i++}`);
@@ -1772,6 +1787,7 @@ export async function getTokenUsageSummaryScoped(input: {
   to?: string;
   agentId?: string;
   model?: string;
+  modelGroup?: string;
   provider?: string;
   operation?: string;
   groupBy?: "day" | "model" | "agent" | "operation";
@@ -1810,6 +1826,11 @@ export async function getTokenUsageSummaryScoped(input: {
   if (input.model) {
     where.push(`model = $${i++}`);
     params.push(input.model);
+  }
+  if (input.modelGroup) {
+    where.push(`(model = $${i} or model like $${i} || '-%')`);
+    params.push(input.modelGroup);
+    i += 1;
   }
   if (input.provider) {
     where.push(`provider = $${i++}`);
@@ -1884,6 +1905,33 @@ export async function getTokenUsageSummaryScoped(input: {
       billableUsdMicros: Number(r.billable_usd_micros),
     })),
   };
+}
+
+export async function listLlmModelCatalog(input?: {
+  provider?: string;
+  active?: boolean;
+}): Promise<LlmModelCatalogRow[]> {
+  const where: string[] = [];
+  const params: Array<string | boolean> = [];
+  let i = 1;
+  if (input?.provider) {
+    where.push(`provider = $${i++}`);
+    params.push(String(input.provider).trim());
+  }
+  if (input?.active != null) {
+    where.push(`active = $${i++}`);
+    params.push(Boolean(input.active));
+  }
+  const { rows } = await query<LlmModelCatalogRow>(
+    [
+      "select id, provider, model_group, model_specific, active, created_at",
+      "from llm_model_catalog",
+      where.length > 0 ? `where ${where.join(" and ")}` : "",
+      "order by provider asc, model_group asc, model_specific asc",
+    ].join("\n"),
+    params
+  );
+  return rows;
 }
 
 export async function listAgentMemoriesScoped(input: {
