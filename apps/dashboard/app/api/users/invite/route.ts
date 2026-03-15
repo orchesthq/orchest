@@ -41,6 +41,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     const message = err instanceof Error ? err.message : String(err);
+    if (
+      message.toLowerCase().includes("already belongs to an active user") ||
+      message.toLowerCase().includes("active invite already exists")
+    ) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

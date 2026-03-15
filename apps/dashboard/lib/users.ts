@@ -137,6 +137,36 @@ export async function createClientInvite(input: {
   invitedByUserId?: string | null;
   expiresInHours?: number;
 }): Promise<string> {
+  const email = input.email.toLowerCase();
+  const existingUser = await getUserByEmail(email);
+  if (existingUser) {
+    const { rows: existingMemberships } = await query<{ client_id: string }>(
+      [
+        "select client_id",
+        "from client_memberships",
+        "where user_id = $1",
+        "limit 1",
+      ].join("\n"),
+      [existingUser.id]
+    );
+    if (existingMemberships.length > 0) {
+      throw new Error("This email already belongs to an active user in another client.");
+    }
+  }
+
+  const { rows: existingInvites } = await query<{ id: string }>(
+    [
+      "select id",
+      "from client_user_invites",
+      "where client_id = $1 and lower(email) = $2 and accepted_at is null and expires_at > now()",
+      "limit 1",
+    ].join("\n"),
+    [input.clientId, email]
+  );
+  if (existingInvites.length > 0) {
+    throw new Error("An active invite already exists for this email.");
+  }
+
   const token = crypto.randomBytes(24).toString("hex");
   const tokenHash = sha256(token);
   const expiresInHours = Math.max(1, input.expiresInHours ?? 72);
@@ -146,7 +176,7 @@ export async function createClientInvite(input: {
       "insert into client_user_invites (client_id, email, invited_by_user_id, token_hash, expires_at)",
       "values ($1, $2, $3, $4, $5)",
     ].join("\n"),
-    [input.clientId, input.email.toLowerCase(), input.invitedByUserId ?? null, tokenHash, expiresAt]
+    [input.clientId, email, input.invitedByUserId ?? null, tokenHash, expiresAt]
   );
   return token;
 }
@@ -200,6 +230,36 @@ export async function acceptClientInvite(input: {
     [invite.id, userId]
   );
   return { userId, clientId: invite.client_id };
+}
+
+export async function revokeClientInvite(input: {
+  clientId: string;
+  inviteId: string;
+}): Promise<void> {
+  const { rows } = await query<{ id: string }>(
+    [
+      "delete from client_user_invites",
+      "where client_id = $1 and id = $2 and accepted_at is null",
+      "returning id",
+    ].join("\n"),
+    [input.clientId, input.inviteId]
+  );
+  if (rows.length === 0) throw new Error("Invite not found.");
+}
+
+export async function revokeUserAccessFromClient(input: {
+  clientId: string;
+  userId: string;
+}): Promise<void> {
+  const { rows } = await query<{ id: string }>(
+    [
+      "delete from client_memberships",
+      "where client_id = $1 and user_id = $2",
+      "returning id",
+    ].join("\n"),
+    [input.clientId, input.userId]
+  );
+  if (rows.length === 0) throw new Error("User membership not found.");
 }
 
 function sha256(value: string): string {

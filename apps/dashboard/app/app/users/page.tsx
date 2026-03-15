@@ -3,10 +3,13 @@ import { authOptions } from "@/auth";
 import { getClientIdFromSession } from "@/lib/session";
 import { listPendingInvitesByClientId, listUsersByClientId } from "@/lib/users";
 import { InviteUserForm } from "./InviteUserForm";
+import { RevokeInviteButton } from "./RevokeInviteButton";
+import { RevokeUserButton } from "./RevokeUserButton";
 
 export default async function UsersPage() {
   const session = await getServerSession(authOptions);
   const clientId = getClientIdFromSession(session);
+  const currentUserId = (session?.user as any)?.id as string | undefined;
   if (!clientId) {
     return (
       <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
@@ -44,6 +47,7 @@ export default async function UsersPage() {
                 <th className="px-2 py-2">Email</th>
                 <th className="px-2 py-2">Verification</th>
                 <th className="px-2 py-2">Joined</th>
+                <th className="px-2 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -58,11 +62,18 @@ export default async function UsersPage() {
                     )}
                   </td>
                   <td className="px-2 py-2">{new Date(u.membership_created_at).toLocaleString()}</td>
+                  <td className="px-2 py-2">
+                    <RevokeUserButton
+                      userId={u.id}
+                      email={u.email}
+                      disabled={Boolean(currentUserId && currentUserId === u.id)}
+                    />
+                  </td>
                 </tr>
               ))}
               {users.length === 0 ? (
                 <tr>
-                  <td className="px-2 py-4 text-zinc-500" colSpan={3}>
+                  <td className="px-2 py-4 text-zinc-500" colSpan={4}>
                     No users yet.
                   </td>
                 </tr>
@@ -81,6 +92,7 @@ export default async function UsersPage() {
                 <th className="px-2 py-2">Email</th>
                 <th className="px-2 py-2">Invited</th>
                 <th className="px-2 py-2">Expires</th>
+                <th className="px-2 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -89,11 +101,14 @@ export default async function UsersPage() {
                   <td className="px-2 py-2">{i.email}</td>
                   <td className="px-2 py-2">{new Date(i.created_at).toLocaleString()}</td>
                   <td className="px-2 py-2">{new Date(i.expires_at).toLocaleString()}</td>
+                  <td className="px-2 py-2">
+                    <RevokeInviteButton inviteId={i.id} email={i.email} />
+                  </td>
                 </tr>
               ))}
               {invites.length === 0 ? (
                 <tr>
-                  <td className="px-2 py-4 text-zinc-500" colSpan={3}>
+                  <td className="px-2 py-4 text-zinc-500" colSpan={4}>
                     No pending invites.
                   </td>
                 </tr>
