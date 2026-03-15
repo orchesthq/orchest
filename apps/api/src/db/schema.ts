@@ -48,6 +48,8 @@ export type AgentRow = {
   name: string;
   role: string;
   system_prompt: string;
+  llm_provider: string;
+  llm_model: string;
   created_at: string;
 };
 
@@ -612,7 +614,7 @@ export async function getAgentByIdScoped(
 
   const { rows } = await query<AgentRow>(
     [
-      "select a.id, a.client_id, a.persona_key, a.name, a.role, a.system_prompt, a.created_at",
+      "select a.id, a.client_id, a.persona_key, a.name, a.role, a.system_prompt, a.llm_provider, a.llm_model, a.created_at",
       "from agents a",
       "where a.id = $2 and a.client_id = $1",
       "limit 1",
@@ -626,7 +628,7 @@ export async function listAgentsScoped(clientId: string): Promise<AgentRow[]> {
   assertUuid(clientId, "clientId");
   const { rows } = await query<AgentRow>(
     [
-      "select id, client_id, persona_key, name, role, system_prompt, created_at",
+      "select id, client_id, persona_key, name, role, system_prompt, llm_provider, llm_model, created_at",
       "from agents",
       "where client_id = $1",
       "order by created_at asc",
@@ -642,15 +644,19 @@ export async function createAgent(input: {
   name: string;
   role: string;
   systemPrompt: string;
+  llmProvider?: string;
+  llmModel?: string;
 }): Promise<AgentRow> {
   assertUuid(input.clientId, "clientId");
+  const llmProvider = String(input.llmProvider ?? "openai_compatible").trim() || "openai_compatible";
+  const llmModel = String(input.llmModel ?? "gpt-5.2").trim() || "gpt-5.2";
   const { rows } = await query<AgentRow>(
     [
-      "insert into agents (client_id, persona_key, name, role, system_prompt)",
-      "values ($1, $2, $3, $4, $5)",
-      "returning id, client_id, persona_key, name, role, system_prompt, created_at",
+      "insert into agents (client_id, persona_key, name, role, system_prompt, llm_provider, llm_model)",
+      "values ($1, $2, $3, $4, $5, $6, $7)",
+      "returning id, client_id, persona_key, name, role, system_prompt, llm_provider, llm_model, created_at",
     ].join("\n"),
-    [input.clientId, input.personaKey ?? null, input.name, input.role, input.systemPrompt]
+    [input.clientId, input.personaKey ?? null, input.name, input.role, input.systemPrompt, llmProvider, llmModel]
   );
   return one(rows, "Failed to create agent");
 }
@@ -662,6 +668,8 @@ export async function updateAgentScoped(input: {
   name?: string;
   role?: string;
   systemPrompt?: string;
+  llmProvider?: string;
+  llmModel?: string;
 }): Promise<AgentRow> {
   assertUuid(input.clientId, "clientId");
   assertUuid(input.agentId, "agentId");
@@ -673,9 +681,11 @@ export async function updateAgentScoped(input: {
       "  persona_key = coalesce($3, persona_key),",
       "  name = coalesce($4, name),",
       "  role = coalesce($5, role),",
-      "  system_prompt = coalesce($6, system_prompt)",
+      "  system_prompt = coalesce($6, system_prompt),",
+      "  llm_provider = coalesce($7, llm_provider),",
+      "  llm_model = coalesce($8, llm_model)",
       "where client_id = $1 and id = $2",
-      "returning id, client_id, persona_key, name, role, system_prompt, created_at",
+      "returning id, client_id, persona_key, name, role, system_prompt, llm_provider, llm_model, created_at",
     ].join("\n"),
     [
       input.clientId,
@@ -684,6 +694,8 @@ export async function updateAgentScoped(input: {
       input.name ?? null,
       input.role ?? null,
       input.systemPrompt ?? null,
+      input.llmProvider ?? null,
+      input.llmModel ?? null,
     ]
   );
   return one(rows, "Agent not found for client (cannot update)");
@@ -712,7 +724,7 @@ export async function ensureDefaultAgentForClient(
   const desiredRole = "ai_software_engineer";
   const { rows: existing } = await query<AgentRow>(
     [
-      "select id, client_id, name, role, system_prompt, created_at",
+      "select id, client_id, name, role, system_prompt, llm_provider, llm_model, created_at",
       "from agents",
       "where client_id = $1 and role = $2",
       "order by created_at asc",
@@ -1118,6 +1130,8 @@ export async function getTaskContextById(taskId: string): Promise<TaskContextRow
     agent_name: string;
     agent_role: string;
     agent_system_prompt: string;
+    agent_llm_provider: string;
+    agent_llm_model: string;
     agent_created_at: string;
     client_id: string;
     client_name: string;
@@ -1129,7 +1143,9 @@ export async function getTaskContextById(taskId: string): Promise<TaskContextRow
       "  t.input as task_input, t.output as task_output,",
       "  t.created_at as task_created_at, t.updated_at as task_updated_at,",
       "  a.id as agent_id, a.client_id as agent_client_id, a.name as agent_name,",
-      "  a.role as agent_role, a.system_prompt as agent_system_prompt, a.created_at as agent_created_at,",
+      "  a.role as agent_role, a.system_prompt as agent_system_prompt,",
+      "  a.llm_provider as agent_llm_provider, a.llm_model as agent_llm_model,",
+      "  a.created_at as agent_created_at,",
       "  c.id as client_id, c.name as client_name, c.created_at as client_created_at",
       "from tasks t",
       "join agents a on a.id = t.agent_id",
@@ -1157,6 +1173,8 @@ export async function getTaskContextById(taskId: string): Promise<TaskContextRow
       name: r.agent_name,
       role: r.agent_role,
       system_prompt: r.agent_system_prompt,
+      llm_provider: r.agent_llm_provider,
+      llm_model: r.agent_llm_model,
       created_at: r.agent_created_at,
     },
     client: {

@@ -21,6 +21,7 @@ export async function createPlan(input: {
       clientId: input.agent.client_id,
       agentId: input.agent.id,
       taskId: input.task.id,
+      model: input.agent.llm_model,
     },
   });
 }

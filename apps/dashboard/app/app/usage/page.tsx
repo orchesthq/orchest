@@ -440,11 +440,11 @@ export default async function UsagePage({
                 <div className="relative z-10 flex h-full items-end gap-1">
                   {chartBuckets.map((bucket, idx) => (
                     <div key={bucket.day} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
-                      <div className="relative w-full overflow-hidden rounded-sm">
+                      <div className="relative h-[88%] w-full overflow-hidden rounded-sm">
                         {bucket.segments.length === 0 ? (
                           <div className="h-px w-full bg-zinc-200" />
                         ) : (
-                          <div className="flex w-full flex-col-reverse">
+                          <div className="flex h-full w-full flex-col-reverse">
                             {bucket.segments.map((seg) => {
                               const segHeight = (seg.tokens / maxChartTokens) * 100;
                               const agentLabel =

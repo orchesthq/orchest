@@ -11,6 +11,15 @@ type Props = {
   initialName: string;
   initialRole: string;
   initialSystemPrompt: string;
+  initialLlmProvider: string;
+  initialLlmModel: string;
+  modelOptions: Array<{
+    id: string;
+    provider: string;
+    model_group: string;
+    model_specific: string;
+    active: boolean;
+  }>;
   initialProfileMemory: string;
 };
 
@@ -18,6 +27,8 @@ export function AgentEditor(props: Props) {
   const [name, setName] = useState(props.initialName);
   const [role, setRole] = useState(props.initialRole);
   const [systemPrompt, setSystemPrompt] = useState(props.initialSystemPrompt);
+  const [llmProvider, setLlmProvider] = useState(props.initialLlmProvider);
+  const [llmModel, setLlmModel] = useState(props.initialLlmModel);
   const [profile, setProfile] = useState(props.initialProfileMemory);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +42,8 @@ export function AgentEditor(props: Props) {
   const [baselineName, setBaselineName] = useState(props.initialName);
   const [baselineRole, setBaselineRole] = useState(props.initialRole);
   const [baselineSystemPrompt, setBaselineSystemPrompt] = useState(props.initialSystemPrompt);
+  const [baselineLlmProvider, setBaselineLlmProvider] = useState(props.initialLlmProvider);
+  const [baselineLlmModel, setBaselineLlmModel] = useState(props.initialLlmModel);
   const [baselineProfile, setBaselineProfile] = useState(props.initialProfileMemory);
 
   const persona = useMemo(() => {
@@ -44,6 +57,25 @@ export function AgentEditor(props: Props) {
   }, [persona, profile]);
 
   const roleTemplate = useMemo(() => getTemplateByRole(role), [role]);
+  const modelOptionsForProvider = useMemo(
+    () =>
+      props.modelOptions
+        .filter((m) => m.active && m.provider === llmProvider)
+        .sort((a, b) => {
+          if (a.model_group !== b.model_group) return a.model_group.localeCompare(b.model_group);
+          return a.model_specific.localeCompare(b.model_specific);
+        }),
+    [props.modelOptions, llmProvider]
+  );
+  const modelGrouped = useMemo(() => {
+    const grouped = new Map<string, Array<{ model_specific: string }>>();
+    for (const m of modelOptionsForProvider) {
+      const arr = grouped.get(m.model_group) ?? [];
+      arr.push({ model_specific: m.model_specific });
+      grouped.set(m.model_group, arr);
+    }
+    return Array.from(grouped.entries());
+  }, [modelOptionsForProvider]);
   const roleIsCustom = useMemo(() => {
     if (!roleTemplate) return false;
     return systemPrompt.trim() !== roleTemplate.defaultSystemPrompt.trim();
@@ -55,6 +87,8 @@ export function AgentEditor(props: Props) {
       (baselinePersonaKey ? false : name !== baselineName) ||
       role !== baselineRole ||
       systemPrompt !== baselineSystemPrompt ||
+      llmProvider !== baselineLlmProvider ||
+      llmModel !== baselineLlmModel ||
       profile !== baselineProfile
     );
   }, [
@@ -67,6 +101,10 @@ export function AgentEditor(props: Props) {
     baselineName,
     baselineRole,
     baselineSystemPrompt,
+    llmProvider,
+    llmModel,
+    baselineLlmProvider,
+    baselineLlmModel,
     baselineProfile,
   ]);
 
@@ -84,7 +122,9 @@ export function AgentEditor(props: Props) {
             personaKey !== baselinePersonaKey ||
             (!baselinePersonaKey && name !== baselineName) ||
             role !== baselineRole ||
-            systemPrompt !== baselineSystemPrompt
+            systemPrompt !== baselineSystemPrompt ||
+            llmProvider !== baselineLlmProvider ||
+            llmModel !== baselineLlmModel
           ) {
             const res = await fetch(`/api/agents/${props.agentId}`, {
               method: "PATCH",
@@ -94,6 +134,8 @@ export function AgentEditor(props: Props) {
                 personaKey: personaKey !== baselinePersonaKey ? personaKey : undefined,
                 role: role !== baselineRole ? role : undefined,
                 systemPrompt: systemPrompt !== baselineSystemPrompt ? systemPrompt : undefined,
+                llmProvider: llmProvider !== baselineLlmProvider ? llmProvider : undefined,
+                llmModel: llmModel !== baselineLlmModel ? llmModel : undefined,
               }),
             });
             if (!res.ok) throw new Error("Failed to update agent");
@@ -113,6 +155,8 @@ export function AgentEditor(props: Props) {
           setBaselineName(name);
           setBaselineRole(role);
           setBaselineSystemPrompt(systemPrompt);
+          setBaselineLlmProvider(llmProvider);
+          setBaselineLlmModel(llmModel);
           setBaselineProfile(profile);
 
           setSavedAt(new Date().toLocaleString());
@@ -244,6 +288,37 @@ export function AgentEditor(props: Props) {
             Reset to role template
           </button>
         ) : null}
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-zinc-900">Model</label>
+        <select
+          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          value={llmModel}
+          onChange={(e) => {
+            const nextModel = e.target.value;
+            setLlmModel(nextModel);
+            const selected = props.modelOptions.find((m) => m.model_specific === nextModel);
+            if (selected) setLlmProvider(selected.provider);
+          }}
+        >
+          {modelGrouped.length === 0 ? (
+            <option value={llmModel}>{llmModel}</option>
+          ) : (
+            modelGrouped.map(([group, models]) => (
+              <optgroup key={group} label={group}>
+                {models.map((m) => (
+                  <option key={m.model_specific} value={m.model_specific}>
+                    {m.model_specific}
+                  </option>
+                ))}
+              </optgroup>
+            ))
+          )}
+        </select>
+        <p className="text-xs text-zinc-500">
+          This agent will execute LLM calls with the selected model.
+        </p>
       </div>
 
       {error && (

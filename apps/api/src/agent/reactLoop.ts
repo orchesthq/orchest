@@ -58,6 +58,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
         clientId: ctx.client.id,
         agentId: ctx.agent.id,
         taskId,
+        model: ctx.agent.llm_model,
       },
     }).catch(() => null);
 
@@ -84,6 +85,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
           clientId: ctx.client.id,
           agentId: ctx.agent.id,
           agentSystemPrompt: ctx.agent.system_prompt,
+          model: ctx.agent.llm_model,
           taskInput: constrainedTaskInput,
           memories,
           registry,
@@ -106,6 +108,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
             clientId: ctx.client.id,
             agentId: ctx.agent.id,
             taskId,
+            model: ctx.agent.llm_model,
           },
         });
 
@@ -136,6 +139,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
       clientId: ctx.client.id,
       agentId: ctx.agent.id,
       agentSystemPrompt: ctx.agent.system_prompt,
+      model: ctx.agent.llm_model,
       taskInput,
       memories,
       registry,
@@ -158,6 +162,7 @@ export async function runAgentTaskReAct(taskId: string, options?: RunAgentTaskOp
         clientId: ctx.client.id,
         agentId: ctx.agent.id,
         taskId,
+        model: ctx.agent.llm_model,
       },
     });
 

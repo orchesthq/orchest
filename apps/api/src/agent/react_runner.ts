@@ -11,6 +11,7 @@ type ReActOptions = {
   taskId: string;
   clientId: string;
   agentId: string;
+  model?: string;
   agentSystemPrompt: string;
   taskInput: string;
   memories: Array<{ memory_type: string; content: string }>;
@@ -238,6 +239,7 @@ export async function runReActLoop(input: ReActOptions): Promise<{
         clientId: input.clientId,
         agentId: input.agentId,
         taskId: input.taskId,
+        model: input.model,
       },
     });
 

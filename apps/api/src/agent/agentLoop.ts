@@ -88,6 +88,7 @@ async function runAgentTaskLegacy(
         clientId: ctx.client.id,
         agentId: ctx.agent.id,
         taskId,
+        model: ctx.agent.llm_model,
       },
     });
 

@@ -10,6 +10,7 @@ export type LlmUsageContext = {
   clientId: string;
   agentId?: string;
   taskId?: string;
+  model?: string;
   operation: string;
   metadata?: Record<string, unknown>;
 };

@@ -239,6 +239,7 @@ export async function handleInboundChatMessage(input: {
         usageContext: {
           clientId: msg.clientId,
           agentId: agent.id,
+          model: agent.llm_model,
           ...(taskId ? { taskId } : {}),
         },
       }).catch(() => fallback);
@@ -323,6 +324,7 @@ export async function handleInboundChatMessage(input: {
           clientId: msg.clientId,
           agentId: agent.id,
           taskId: task.id,
+          model: agent.llm_model,
         },
       }).catch(() => null);
 
@@ -453,6 +455,7 @@ export async function handleInboundChatMessage(input: {
         usageContext: {
           clientId: msg.clientId,
           agentId: agent.id,
+          model: agent.llm_model,
           ...(interactionTask?.id ? { taskId: interactionTask.id } : {}),
         },
       });

@@ -12,6 +12,7 @@ import {
   listAgentsScoped,
   listAgentMemoriesByTypeScoped,
   listAgentMemoriesScoped,
+  listLlmModelCatalog,
   updateAgentScoped,
 } from "../db/schema";
 import { addAgentMemory } from "../agent/memoryService";
@@ -52,6 +53,15 @@ router.get("/", async (req, res, next) => {
     const clientId = req.clientId!;
     const agents = await listAgentsScoped(clientId);
     res.status(200).json({ agents });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/model-options", async (_req, res, next) => {
+  try {
+    const rows = await listLlmModelCatalog({ active: true });
+    res.status(200).json({ models: rows });
   } catch (err) {
     next(err);
   }
@@ -116,6 +126,8 @@ router.post("/", requireInternalServiceAuth, async (req, res, next) => {
         name: z.string().min(1).optional(),
         role: z.string().min(1).default("ai_software_engineer"),
         systemPrompt: z.string().min(1).optional(),
+        llmProvider: z.string().min(1).optional(),
+        llmModel: z.string().min(1).optional(),
       })
       .parse(req.body);
 
@@ -143,6 +155,8 @@ router.post("/", requireInternalServiceAuth, async (req, res, next) => {
       name,
       role: body.role,
       systemPrompt,
+      llmProvider: body.llmProvider,
+      llmModel: body.llmModel,
     });
 
     res.status(201).json({ agent });
@@ -150,6 +164,10 @@ router.post("/", requireInternalServiceAuth, async (req, res, next) => {
     // Unique violation on (client_id, persona_key) means persona already hired.
     if ((err as any)?.code === "23505") {
       res.status(409).json({ error: "This persona is already hired for your company." });
+      return;
+    }
+    if ((err as any)?.code === "23503") {
+      res.status(400).json({ error: "Invalid LLM model selection." });
       return;
     }
     next(err);
@@ -166,6 +184,8 @@ router.patch("/:agentId", requireInternalServiceAuth, async (req, res, next) => 
         personaKey: z.string().min(1).nullable().optional(),
         role: z.string().min(1).optional(),
         systemPrompt: z.string().min(1).optional(),
+        llmProvider: z.string().min(1).optional(),
+        llmModel: z.string().min(1).optional(),
       })
       .parse(req.body);
 
@@ -199,10 +219,16 @@ router.patch("/:agentId", requireInternalServiceAuth, async (req, res, next) => 
       personaKey: body.personaKey,
       role: body.role,
       systemPrompt: body.systemPrompt,
+      llmProvider: body.llmProvider,
+      llmModel: body.llmModel,
     });
 
     res.status(200).json({ agent });
   } catch (err) {
+    if ((err as any)?.code === "23503") {
+      res.status(400).json({ error: "Invalid LLM model selection." });
+      return;
+    }
     next(err);
   }
 });

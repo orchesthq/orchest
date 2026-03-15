@@ -18,6 +18,16 @@ type Agent = {
   name: string;
   role: string;
   system_prompt: string;
+  llm_provider: string;
+  llm_model: string;
+};
+
+type LlmModelOption = {
+  id: string;
+  provider: string;
+  model_group: string;
+  model_specific: string;
+  active: boolean;
 };
 
 type Memory = {
@@ -95,6 +105,7 @@ export default async function AgentPage({
   let githubStatus: GitHubStatus | null = null;
   let githubConnections: GitHubConnection[] = [];
   let githubRepos: Array<{ full_name: string }> = [];
+  let modelOptions: LlmModelOption[] = [];
   let loadError: string | null = null;
   try {
     agentResp = await apiFetchForClient<{ agent: Agent }>(
@@ -108,6 +119,17 @@ export default async function AgentPage({
       `/agents/${agentIdParsed.data}/memories?memoryType=profile&limit=1`,
       { method: "GET" }
     );
+
+    try {
+      const modelsResp = await apiFetchForClient<{ models: LlmModelOption[] }>(
+        clientId,
+        "/agents/model-options",
+        { method: "GET" }
+      );
+      modelOptions = modelsResp.models ?? [];
+    } catch {
+      modelOptions = [];
+    }
 
     slackStatus = await apiFetchForClient<SlackStatus>(clientId, "/internal/slack/status", {
       method: "GET",
@@ -273,6 +295,9 @@ export default async function AgentPage({
           initialName={agentResp.agent.name}
           initialRole={agentResp.agent.role}
           initialSystemPrompt={agentResp.agent.system_prompt}
+          initialLlmProvider={agentResp.agent.llm_provider}
+          initialLlmModel={agentResp.agent.llm_model}
+          modelOptions={modelOptions}
           initialProfileMemory={latestProfile}
           personaKey={agentResp.agent.persona_key ?? null}
         />

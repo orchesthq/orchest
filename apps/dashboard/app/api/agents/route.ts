@@ -10,6 +10,8 @@ const createSchema = z.object({
   name: z.string().min(1).optional(),
   role: z.string().min(1).optional(),
   systemPrompt: z.string().min(1).optional(),
+  llmProvider: z.string().min(1).optional(),
+  llmModel: z.string().min(1).optional(),
 });
 
 export async function POST(req: Request) {

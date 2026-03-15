@@ -90,6 +90,13 @@ export class OpenAiClient extends LlmClient {
 
   async chatCompletionRaw(body: any, usageContext?: TokenUsageContext): Promise<any> {
     await this.assertClientCanUseLlm(usageContext);
+    const modelFromBody =
+      typeof body?.model === "string" && body.model.trim().length > 0 ? body.model.trim() : null;
+    const modelFromContext =
+      typeof usageContext?.model === "string" && usageContext.model.trim().length > 0
+        ? usageContext.model.trim()
+        : null;
+    const model = modelFromBody ?? modelFromContext ?? this.defaultModel;
     const url = `${this.baseUrl}/chat/completions`;
     const res = await fetch(url, {
       method: "POST",
@@ -97,7 +104,7 @@ export class OpenAiClient extends LlmClient {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model: this.defaultModel, temperature: 0.2, ...body }),
+      body: JSON.stringify({ temperature: 0.2, ...body, model }),
     });
 
     if (!res.ok) {
@@ -118,6 +125,13 @@ export class OpenAiClient extends LlmClient {
 
   async embeddingsRaw(body: any, usageContext?: TokenUsageContext): Promise<any> {
     await this.assertClientCanUseLlm(usageContext);
+    const modelFromBody =
+      typeof body?.model === "string" && body.model.trim().length > 0 ? body.model.trim() : null;
+    const modelFromContext =
+      typeof usageContext?.model === "string" && usageContext.model.trim().length > 0
+        ? usageContext.model.trim()
+        : null;
+    const model = modelFromBody ?? modelFromContext ?? this.defaultModel;
     const url = `${this.baseUrl}/embeddings`;
     const res = await fetch(url, {
       method: "POST",
@@ -125,7 +139,7 @@ export class OpenAiClient extends LlmClient {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, model }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
