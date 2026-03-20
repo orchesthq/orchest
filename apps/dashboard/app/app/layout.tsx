@@ -5,6 +5,7 @@ import { SignOutButton } from "./SignOutButton";
 import { AppNav } from "./AppNav";
 import { apiGetClientById } from "@/lib/internalApi";
 import { getClientIdFromSession } from "@/lib/session";
+import { Logo } from "@/components/Logo";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
@@ -21,11 +22,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-zinc-800 bg-zinc-900">
         {/* Logo */}
         <div className="flex h-14 shrink-0 items-center border-b border-zinc-800 px-5">
-          <Link href="/app" className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-sm font-bold text-white">
-              O
-            </span>
-            <span className="text-sm font-bold tracking-tight text-white">Orchest</span>
+          <Link href="/app">
+            <Logo iconClassName="h-7 w-7" textClassName="text-sm" />
           </Link>
         </div>
 

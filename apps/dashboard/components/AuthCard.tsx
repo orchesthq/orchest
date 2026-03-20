@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Logo } from "@/components/Logo";
 
 export function AuthCard({
   title,
@@ -16,11 +17,8 @@ export function AuthCard({
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="mb-8 flex justify-center">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600 text-lg font-bold text-white shadow-lg shadow-violet-600/30">
-              O
-            </span>
-            <span className="text-lg font-bold tracking-tight text-white">Orchest</span>
+          <Link href="/">
+            <Logo iconClassName="h-9 w-9" textClassName="text-lg" showHQ={false} />
           </Link>
         </div>
 

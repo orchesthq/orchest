@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Orchest",
-  description: "AI workforce dashboard",
+  title: "Orchest HQ",
+  description: "Your AI workforce headquarters",
 };
 
 export default function RootLayout({

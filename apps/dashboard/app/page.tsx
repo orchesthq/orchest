@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/auth";
 import { getClientIdFromSession } from "@/lib/session";
+import { Logo, LogoMark } from "@/components/Logo";
 
 // ─── inline icon primitives ──────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ function NavBar() {
   return (
     <nav className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-zinc-950/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <span className="text-lg font-bold tracking-tight text-white">Orchest</span>
+        <Logo iconClassName="h-8 w-8" textClassName="text-lg" />
         <div className="hidden items-center gap-8 sm:flex">
           <a href="#features" className="text-sm text-zinc-400 transition hover:text-white">Features</a>
           <a href="#how-it-works" className="text-sm text-zinc-400 transition hover:text-white">How it works</a>
@@ -268,9 +269,7 @@ export default async function Home() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950">
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-10 text-center shadow-xl">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-violet-600 text-2xl font-bold text-white">
-            O
-          </div>
+          <LogoMark className="mx-auto h-12 w-12" />
           <h1 className="mt-4 text-xl font-semibold text-white">Welcome back</h1>
           <p className="mt-2 text-sm text-zinc-400">Ready to check in on your agents?</p>
           <Link
@@ -314,9 +313,9 @@ export default async function Home() {
             </h1>
 
             <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-400">
-              Orchest connects your knowledge base and tools to intelligent agents that
-              answer questions, summarize threads, and get work done — right inside Slack,
-              with humans always in control.
+              Your AI workforce headquarters. Connect your knowledge base and tools to
+              intelligent agents that answer questions, summarize threads, and get work
+              done — right inside Slack, with humans always in control.
             </p>
 
             <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row">
@@ -367,7 +366,7 @@ export default async function Home() {
               Everything your team needs to delegate smarter
             </h2>
             <p className="mt-4 text-zinc-400">
-              From instant Q&A to repeatable workflows — Orchest handles the repetitive
+              From instant Q&A to repeatable workflows — Orchest HQ handles the repetitive
               work so your team can focus on what matters.
             </p>
           </div>
@@ -478,9 +477,7 @@ export default async function Home() {
               <div className="absolute bottom-0 right-1/4 h-48 w-48 rounded-full bg-white/10 blur-3xl" />
             </div>
             <div className="relative">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 text-3xl font-bold text-white ring-1 ring-white/30">
-                O
-              </div>
+              <LogoMark className="mx-auto h-14 w-14" />
               <h2 className="mt-6 text-3xl font-bold text-white sm:text-4xl">
                 Ready to give your team a superpower?
               </h2>
@@ -559,9 +556,9 @@ export default async function Home() {
       {/* ── Footer ───────────────────────────────────────────────────────────── */}
       <footer className="border-t border-zinc-800 py-10">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-6 sm:flex-row sm:justify-between">
-          <span className="text-sm font-semibold text-white">Orchest</span>
+          <Logo iconClassName="h-6 w-6" textClassName="text-sm" />
           <p className="text-sm text-zinc-500">
-            © {new Date().getFullYear()} Orchest. All rights reserved.
+            © {new Date().getFullYear()} Orchest HQ. All rights reserved.
           </p>
           <div className="flex gap-6 text-sm text-zinc-500">
             <Link href="/sign-in" className="transition hover:text-white">Sign in</Link>
