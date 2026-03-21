@@ -1,0 +1,15 @@
+<svg width="640" height="160" viewBox="0 0 640 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Icon mark -->
+  <rect width="140" height="140" y="10" rx="35" fill="url(#wgrad)"/>
+  <circle cx="70" cy="80" r="31" stroke="white" stroke-width="11" fill="none"/>
+  <circle cx="99" cy="51" r="9.5" fill="white"/>
+  <!-- Wordmark -->
+  <text x="164" y="108" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-weight="700" font-size="80" letter-spacing="-2" fill="#ffffff">Orchest</text>
+  <text x="489" y="108" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-weight="600" font-size="80" letter-spacing="-2" fill="#7c3aed">HQ</text>
+  <defs>
+    <linearGradient id="wgrad" x1="0" y1="10" x2="140" y2="150">
+      <stop stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+</svg>
